@@ -54,7 +54,7 @@ def createChart(ticker = "SPY", period = "5d", interval = "15m"):
 
 def getOptions(ticker = 'SPY'):
     stock = yf.Ticker(ticker)
-    options = stock.option_chain(stock.options[0])
+    options = stock.option_chain(stock.options[4])
     price = int(stock.info['ask'])
     for i in range(len(options.calls)):
         if price == options.calls['strike'][i]:
@@ -102,5 +102,4 @@ def get_rsi(period = "5d", interval = "15m", lookback = 14):
     rsi_df = rsi_df.dropna()
     return rsi_df[lookback:]
 
-
-print(get_rsi())
+getOptions()
