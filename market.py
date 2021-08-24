@@ -77,6 +77,30 @@ def movingAverage(price_df,period = 50, exponential = 1, weightF = 100):
     else:
         return '-'
 
-d = yf.Ticker("SPY")
-d.
-createChart()
+def get_rsi(period = "5d", interval = "15m", lookback = 14):
+    stock = yf.Ticker("SPY")
+    data = stock.history(period = period, interval = interval)
+    close = data['Close'].tolist()
+    diff = np.subtract(close [1:], close[:-1])
+    up = []
+    down = []
+    for i in range(len(diff)):
+        if diff[i] < 0:
+            up.append(0)
+            down.append(diff[i])
+        else:
+            up.append(diff[i])
+            down.append(0)
+    up_series = pd.Series(up)
+    down_series = pd.Series(down).abs()
+    up_ewm = up_series.ewm(com = lookback - 1, adjust = False).mean()
+    down_ewm = down_series.ewm(com = lookback - 1, adjust = False).mean()
+    rs = up_ewm/down_ewm
+    rsi = 100 - (100 / (1 + rs))
+    rsi_df = pd.DataFrame(rsi)
+    #.rename(columns = {0:'rsi'}).set_index(close.index)
+    rsi_df = rsi_df.dropna()
+    return rsi_df[lookback:]
+
+
+print(get_rsi())
