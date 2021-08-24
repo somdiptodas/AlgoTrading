@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="30">
+
+  <script type = "text/JavaScript">
+    function AutoRefresh( t ) {setTimeout("location.reload(true);", t);}
+  </script>
+
+  <style>
+  * {box-sizing: border-box;}
+  h3 {text-align: center;}
+
+  .plot {display: block; margin-left: auto; margin-right: auto; width: 100%; height : 350px;}
+
+  /* Create three unequal columns that floats next to each other */
+  .column {float: left; padding: 10px; height: 400px;}
+  
+  .left, .middle {width: 32%;}
+  
+  .right {width: 36%;}
+  
+  /* Clear floats after the columns */
+  .row:after {content: ""; display: table; clear: both;}
+
+  table,th,td {padding: 10px; border: 1px solid black; border-collapse: collapse;}
+
+  </style>
+</head>
+
+<body>
+  <div class="row">
+    <h1>MARKET WATCH</h1>
+    <div class="column left">
+      <h3>15 Minute - 5 Day</h3>
+      <img src="/week.png" alt="week plot" class = "plot">
+      <h3>1 Hour - 1 Month</h3>
+      <img src="/month.png" alt="month plot" class = "plot">
+    </div>
+    <div class="column middle">
+      <h3>2 Minute - Daily</h3>
+      <img src="/day.png" alt="day plot" class = "plot"> 
+    </div>
+    <div class="column right">
+      <table>
+        {% for key, value in rate %}
+          <tr>
+            <th> {{ key }} </th>
+            <td> {{ value }} </td>
+          </tr>
+        {% endfor %}
+      </table>
+      <p>Call Options Data</p>
+      <table>
+        <tr>
+          <th> Strike </th>
+          <td> Last Price </td>
+          <td> Bid </td>
+          <td> Ask  </td>
+          <td> Volume </td>
+          <td> Open Interest </td>
+          <td> ITM </td>
+        </tr>
+        {% for contractSymbol, lastTradeDate, strike, lastPrice, bid, ask, change, percentChange, volume, openInterest, impliedVol, inTheMoney, contractSize, currency in options %}
+          <tr>
+            <th> {{ strike }} </th>
+            <td> {{ lastPrice }} </td>
+            <td> {{ bid }} </td>
+            <td> {{ ask }} </td>
+            <td> {{ volume }} </td>
+            <td> {{ openInterest }} </td>
+            <td> {{ inTheMoney }} </td>
+          </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+</body>
