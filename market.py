@@ -102,3 +102,40 @@ def get_rsi(period = "5d", interval = "15m", lookback = 14):
     rsi_df = rsi_df.dropna()
     return rsi_df[lookback:]
 
+
+def format(option, optiontype, effect, action):
+    '''
+    Parameter
+    --------
+    option : list
+        singluar option from getOptions()
+    optiontype : Str
+        "call" or "put"
+    effect : Str
+        "open" or "close"
+    action
+        "buy or "sell"
+
+    Returns
+    --------
+    Dictionary\n
+    Example:
+
+    leg1 = {"expirationDate":"2019-12-20",
+            "strike":"2.00",
+            "optionType":"call",
+            "effect":"open",
+            "action":"buy"}
+
+    '''
+
+    expiry = "20" + option[0][3:5] + "-" + option[0][5:7] + "-" + option[0][7:9]
+    strike = str(option[2])
+
+    leg = {"expirationDate" : expiry,
+            "strike" : strike,
+            "optionType" : optiontype,
+            "effect" : effect,
+            "action" : action}
+
+    return leg
