@@ -102,4 +102,3 @@ def get_rsi(period = "5d", interval = "15m", lookback = 14):
     rsi_df = rsi_df.dropna()
     return rsi_df[lookback:]
 
-getOptions()
