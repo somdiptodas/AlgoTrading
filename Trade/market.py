@@ -55,7 +55,7 @@ def createChart(ticker = "SPY", period = "5d", interval = "15m"):
 def getOptions(ticker = 'SPY'):
     stock = yf.Ticker(ticker)
     options = stock.option_chain(stock.options[4])
-    price = int(stock.info['ask'])
+    price = int(stock.history(period= "1d", interval= "15m")['Close'][-1])
     for i in range(len(options.calls)):
         if price == options.calls['strike'][i]:
             calls = options.calls[i-8 : i+9]
@@ -97,18 +97,18 @@ def get_rsi(period = "5d", interval = "15m", lookback = 14):
     down_ewm = down_series.ewm(com = lookback - 1, adjust = False).mean()
     rs = up_ewm/down_ewm
     rsi = 100 - (100 / (1 + rs))
-    rsi_df = pd.DataFrame(rsi)
+    rsi_df = rsi.to_list()
     #.rename(columns = {0:'rsi'}).set_index(close.index)
-    rsi_df = rsi_df.dropna()
     return rsi_df[lookback:]
 
 
-def format(option, optiontype, effect, action):
+def format(expiry, strikePrice, optiontype, effect, action):
     '''
     Parameter
     --------
-    option : list
-        singluar option from getOptions()
+    Expiry : Str
+        "YYYY-MM-DD"
+    strikePrice : Str
     optiontype : Str
         "call" or "put"
     effect : Str
@@ -129,13 +129,14 @@ def format(option, optiontype, effect, action):
 
     '''
 
-    expiry = "20" + option[0][3:5] + "-" + option[0][5:7] + "-" + option[0][7:9]
-    strike = str(option[2])
-
     leg = {"expirationDate" : expiry,
-            "strike" : strike,
+            "strike" : strikePrice,
             "optionType" : optiontype,
             "effect" : effect,
             "action" : action}
 
     return leg
+
+def getOptionDates(ticker = "SPY"):
+    stock = yf.Ticker(ticker)
+    return stock.options
