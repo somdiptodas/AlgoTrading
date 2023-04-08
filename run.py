@@ -10,9 +10,9 @@ def startAlgo(ticker = "SPY", quantity = 1):
 def startWeb():
     w.app.run(debug = True)
 
-t1 = threading.Thread(target = startAlgo)
-t1.start()
+#t1 = threading.Thread(target = startAlgo)
+#t1.start()
 
-#startWeb()
-#t2 = threading.Thread(target = startWeb)
-#t2.start()
+startWeb()
+t2 = threading.Thread(target = startWeb)
+t2.start()

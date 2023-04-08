@@ -26,7 +26,7 @@ def closeCallSpread(expiry, strPrice, limitPrice, ticker = "SPY", quantity = 1):
     """
     OPTIONTYPE = "call"
     EFFECT = "close"
-    limitPrice = round(float(limitPrice*1.2), 2)
+    limitPrice = round(float(limitPrice*1.3), 2)
 
     leg1 = m.format(expiry, str(strPrice + 3), OPTIONTYPE, EFFECT, action = "sell")
     leg2 = m.format(expiry, str(strPrice + 4), OPTIONTYPE, EFFECT, action = "buy")

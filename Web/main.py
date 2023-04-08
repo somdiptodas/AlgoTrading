@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, render_template, redirect, Response
-import Trade.market as market
+import market
 app = Flask(__name__)
 
 @app.route('/', methods=("POST", "GET"))
