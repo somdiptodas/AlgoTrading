@@ -1,2 +1,11 @@
 __pycache__/
-data/
+*.pyc
+.pytest_cache/
+.venv/
+trader.egg-info/
+data/research/
+data/*.html
+data/*.csv
+data/market_data.db
+data/market_data.db-shm
+data/market_data.db-wal

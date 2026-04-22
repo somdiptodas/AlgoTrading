@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from typing import Callable
+
+from trader.data.models import MarketBar
+from trader.strategies.filters import session
+from trader.strategies.signals import breakout, ema_cross
+from trader.strategies.sizers import full_notional
+from trader.strategies.spec import FilterSpec, SignalSpec, StrategySpec
+
+
+SignalGenerator = Callable[[tuple[MarketBar, ...], tuple[MarketBar, ...], dict[str, int | float]], list[bool]]
+
+
+class StrategyRegistry:
+    def __init__(self) -> None:
+        self.signal_handlers = {
+            "ema_cross": {
+                "normalize_params": ema_cross.normalize_params,
+                "required_history": ema_cross.required_history,
+                "generate_regime": ema_cross.generate_regime,
+                "parameter_grid": ema_cross.parameter_grid,
+                "neighbors": ema_cross.neighbors,
+            },
+            "breakout": {
+                "normalize_params": breakout.normalize_params,
+                "required_history": breakout.required_history,
+                "generate_regime": breakout.generate_regime,
+                "parameter_grid": breakout.parameter_grid,
+                "neighbors": breakout.neighbors,
+            },
+        }
+        self.sizing_handlers = {"full_notional": {"normalize_params": full_notional.normalize_params}}
+        self.filter_handlers = {"session": {"normalize_params": session.normalize_params}}
+
+    def validate_spec(self, spec: StrategySpec) -> StrategySpec:
+        if spec.instrument != "SPY":
+            raise ValueError("Only SPY is supported in v1")
+        if spec.multiplier != 1 or spec.timespan != "minute":
+            raise ValueError("Only SPY 1-minute bars are supported in v1")
+        if spec.exec_config.initial_cash <= 0:
+            raise ValueError("exec_config.initial_cash must be > 0")
+        if spec.exec_config.commission_per_order < 0:
+            raise ValueError("exec_config.commission_per_order must be >= 0")
+        if spec.exec_config.slippage_bps < 0:
+            raise ValueError("exec_config.slippage_bps must be >= 0")
+        if spec.signal.name not in self.signal_handlers:
+            raise ValueError(f"Unknown signal handler: {spec.signal.name}")
+        if spec.sizing.name not in self.sizing_handlers:
+            raise ValueError(f"Unknown sizing handler: {spec.sizing.name}")
+        normalized_signal = self.signal_handlers[spec.signal.name]["normalize_params"](spec.signal.params)
+        normalized_sizing = self.sizing_handlers[spec.sizing.name]["normalize_params"](spec.sizing.params)
+        normalized_filters = tuple(self._validate_filter(filter_spec) for filter_spec in spec.filters)
+        normalized = replace(
+            spec,
+            signal=SignalSpec(spec.signal.name, normalized_signal),
+            sizing=replace(spec.sizing, params=normalized_sizing),
+            filters=normalized_filters,
+        )
+        return normalized
+
+    def _validate_filter(self, filter_spec: FilterSpec) -> FilterSpec:
+        if filter_spec.name not in self.filter_handlers:
+            raise ValueError(f"Unknown filter handler: {filter_spec.name}")
+        normalized = self.filter_handlers[filter_spec.name]["normalize_params"](filter_spec.params)
+        return FilterSpec(name=filter_spec.name, params=normalized)
+
+    def required_history(self, spec: StrategySpec) -> int:
+        validated = self.validate_spec(spec)
+        return int(self.signal_handlers[validated.signal.name]["required_history"](validated.signal.params))
+
+    def generate_regime(self, spec: StrategySpec, history_bars: tuple[MarketBar, ...], test_bars: tuple[MarketBar, ...]) -> list[bool]:
+        validated = self.validate_spec(spec)
+        handler = self.signal_handlers[validated.signal.name]["generate_regime"]
+        return handler(history_bars, test_bars, validated.signal.params)
+
+    def parameter_grid(self, signal_name: str) -> tuple[dict[str, int | float], ...]:
+        if signal_name not in self.signal_handlers:
+            raise ValueError(f"Unknown signal handler: {signal_name}")
+        return self.signal_handlers[signal_name]["parameter_grid"]()
+
+    def neighbors(self, spec: StrategySpec) -> tuple[StrategySpec, ...]:
+        validated = self.validate_spec(spec)
+        neighbor_params = self.signal_handlers[validated.signal.name]["neighbors"](validated.signal.params)
+        return tuple(
+            replace(
+                validated,
+                name=f"{validated.signal.name}_{index}",
+                signal=SignalSpec(validated.signal.name, params),
+            )
+            for index, params in enumerate(neighbor_params)
+        )
+
+
+REGISTRY = StrategyRegistry()
