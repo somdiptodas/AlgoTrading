@@ -4,7 +4,10 @@ import sqlite3
 from pathlib import Path
 from typing import Iterable
 
-from Trader.models import AggregateBar
+try:
+    from Trader.models import AggregateBar
+except ModuleNotFoundError:
+    from models import AggregateBar
 
 
 class SQLiteBarStore:
@@ -128,3 +131,114 @@ class SQLiteBarStore:
                 """,
                 (ticker, multiplier, timespan),
             ).fetchone()
+
+    def fetch_bars(
+        self,
+        ticker: str,
+        multiplier: int,
+        timespan: str,
+        start_timestamp_ms: int | None = None,
+        end_timestamp_ms: int | None = None,
+        limit: int | None = None,
+    ) -> list[sqlite3.Row]:
+        query = """
+            SELECT
+                ticker,
+                multiplier,
+                timespan,
+                timestamp_ms,
+                timestamp_utc,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                vwap,
+                transactions
+            FROM aggregate_bars
+            WHERE ticker = ? AND multiplier = ? AND timespan = ?
+        """
+        params: list[object] = [ticker, multiplier, timespan]
+
+        if start_timestamp_ms is not None:
+            query += " AND timestamp_ms >= ?"
+            params.append(start_timestamp_ms)
+
+        if end_timestamp_ms is not None:
+            query += " AND timestamp_ms <= ?"
+            params.append(end_timestamp_ms)
+
+        query += " ORDER BY timestamp_ms"
+
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        with self._connect() as connection:
+            return list(connection.execute(query, params).fetchall())
+
+    def fetch_bucketed_bars(
+        self,
+        ticker: str,
+        multiplier: int,
+        timespan: str,
+        bucket_ms: int,
+        start_timestamp_ms: int | None = None,
+        end_timestamp_ms: int | None = None,
+    ) -> list[sqlite3.Row]:
+        if bucket_ms < 1:
+            raise ValueError("bucket_ms must be >= 1")
+
+        query = """
+            WITH filtered AS (
+                SELECT *
+                FROM aggregate_bars
+                WHERE ticker = ? AND multiplier = ? AND timespan = ?
+        """
+        params: list[object] = [ticker, multiplier, timespan]
+
+        if start_timestamp_ms is not None:
+            query += " AND timestamp_ms >= ?"
+            params.append(start_timestamp_ms)
+
+        if end_timestamp_ms is not None:
+            query += " AND timestamp_ms <= ?"
+            params.append(end_timestamp_ms)
+
+        query += """
+            ),
+            annotated AS (
+                SELECT
+                    *,
+                    (timestamp_ms / ?) * ? AS bucket_timestamp_ms,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY (timestamp_ms / ?)
+                        ORDER BY timestamp_ms ASC
+                    ) AS open_rank,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY (timestamp_ms / ?)
+                        ORDER BY timestamp_ms DESC
+                    ) AS close_rank
+                FROM filtered
+            )
+            SELECT
+                ticker,
+                multiplier,
+                timespan,
+                bucket_timestamp_ms AS timestamp_ms,
+                MIN(timestamp_utc) AS timestamp_utc,
+                MAX(CASE WHEN open_rank = 1 THEN open END) AS open,
+                MAX(high) AS high,
+                MIN(low) AS low,
+                MAX(CASE WHEN close_rank = 1 THEN close END) AS close,
+                SUM(volume) AS volume,
+                AVG(vwap) AS vwap,
+                SUM(transactions) AS transactions
+            FROM annotated
+            GROUP BY ticker, multiplier, timespan, bucket_timestamp_ms
+            ORDER BY bucket_timestamp_ms
+        """
+        params.extend([bucket_ms, bucket_ms, bucket_ms, bucket_ms])
+
+        with self._connect() as connection:
+            return list(connection.execute(query, params).fetchall())

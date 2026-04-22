@@ -6,7 +6,10 @@ import time
 from massive import RESTClient
 from urllib3.exceptions import MaxRetryError
 
-from Trader.models import AggregateBar
+try:
+    from Trader.models import AggregateBar
+except ModuleNotFoundError:
+    from models import AggregateBar
 
 
 class MassiveAggregatesClient:

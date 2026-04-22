@@ -6,9 +6,14 @@ from datetime import date, datetime, timedelta
 import time
 from typing import Iterable
 
-from Trader.config import Settings, load_settings
-from Trader.massive_client import MassiveAggregatesClient
-from Trader.storage import SQLiteBarStore
+try:
+    from Trader.config import Settings, load_settings
+    from Trader.massive_client import MassiveAggregatesClient
+    from Trader.storage import SQLiteBarStore
+except ModuleNotFoundError:
+    from config import Settings, load_settings
+    from massive_client import MassiveAggregatesClient
+    from storage import SQLiteBarStore
 
 
 @dataclass(frozen=True)
