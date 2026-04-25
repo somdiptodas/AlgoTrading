@@ -200,6 +200,13 @@ def test_strategy_validation_rejects_non_finite_numeric_values() -> None:
                 exec_config=ExecConfig(stop_loss_bps=float("nan")),
             )
         )
+    with pytest.raises(ValueError, match="exec_config.no_new_entry_minutes_before_close must be finite"):
+        REGISTRY.validate_spec(
+            StrategySpec(
+                name="bad_nan_entry_cutoff",
+                exec_config=ExecConfig(no_new_entry_minutes_before_close=float("nan")),  # type: ignore[arg-type]
+            )
+        )
 
 
 @pytest.mark.parametrize("constant", ("NaN", "Infinity", "-Infinity"))

@@ -4,13 +4,20 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from trader.strategies.registry import StrategyRegistry
-from trader.strategies.spec import SignalSpec, SizingSpec, StrategySpec
+from trader.strategies.spec import ExecConfig, SignalSpec, SizingSpec, StrategySpec
 
 
 _SIZING_GRID = (
     SizingSpec("fixed_fraction", {"fraction": 0.25}),
     SizingSpec("fixed_fraction", {"fraction": 0.50}),
     SizingSpec("fixed_fraction", {"fraction": 1.00}),
+)
+_EXECUTION_GRID = (
+    ExecConfig(),
+    ExecConfig(entry_session_window="first_30m"),
+    ExecConfig(entry_session_window="last_30m"),
+    ExecConfig(entry_session_window="avoid_midday"),
+    ExecConfig(no_new_entry_minutes_before_close=30),
 )
 
 
@@ -38,18 +45,20 @@ class DeterministicPlanner:
             family_candidates: list[PlannedSpec] = []
             for params in self.registry.parameter_grid(signal_name):
                 for sizing in _SIZING_GRID:
-                    family_candidates.append(
-                        PlannedSpec(
-                            spec=self._rename(
-                                StrategySpec(
-                                    name=f"{signal_name}_grid",
-                                    signal=SignalSpec(signal_name, params),
-                                    sizing=sizing,
-                                )
-                            ),
-                            generator_kind="grid",
+                    for exec_config in _EXECUTION_GRID:
+                        family_candidates.append(
+                            PlannedSpec(
+                                spec=self._rename(
+                                    StrategySpec(
+                                        name=f"{signal_name}_grid",
+                                        signal=SignalSpec(signal_name, params),
+                                        sizing=sizing,
+                                        exec_config=exec_config,
+                                    )
+                                ),
+                                generator_kind="grid",
+                            )
                         )
-                    )
             grid_buckets.append(family_candidates)
         frontier_buckets = {signal_name: [] for signal_name in allowed}
         for parent_experiment_id, parent_spec in sorted(frontier_specs, key=lambda item: item[0]):

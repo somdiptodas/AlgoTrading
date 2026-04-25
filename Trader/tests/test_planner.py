@@ -45,14 +45,14 @@ def test_planner_emits_fixed_fraction_sizing_across_enabled_families() -> None:
     planner = DeterministicPlanner(REGISTRY)
 
     planned = planner.plan(
-        batch_size=9,
+        batch_size=45,
         allowed_signal_families=("ema_cross", "breakout", "rsi_reversion"),
     )
 
     assert {
         (item.spec.signal.name, item.spec.sizing.name, item.spec.sizing.params["fraction"])
         for item in planned
-    } == {
+    } >= {
         ("ema_cross", "fixed_fraction", 0.25),
         ("ema_cross", "fixed_fraction", 0.50),
         ("ema_cross", "fixed_fraction", 1.00),
@@ -62,6 +62,41 @@ def test_planner_emits_fixed_fraction_sizing_across_enabled_families() -> None:
         ("rsi_reversion", "fixed_fraction", 0.25),
         ("rsi_reversion", "fixed_fraction", 0.50),
         ("rsi_reversion", "fixed_fraction", 1.00),
+    }
+    assert all(REGISTRY.validate_spec(item.spec) for item in planned)
+
+
+def test_planner_emits_session_time_execution_variants_across_enabled_families() -> None:
+    planner = DeterministicPlanner(REGISTRY)
+
+    planned = planner.plan(
+        batch_size=45,
+        allowed_signal_families=("ema_cross", "breakout", "rsi_reversion"),
+    )
+
+    assert {
+        (
+            item.spec.signal.name,
+            item.spec.exec_config.entry_session_window,
+            item.spec.exec_config.no_new_entry_minutes_before_close,
+        )
+        for item in planned
+    } >= {
+        ("ema_cross", "all", None),
+        ("ema_cross", "first_30m", None),
+        ("ema_cross", "last_30m", None),
+        ("ema_cross", "avoid_midday", None),
+        ("ema_cross", "all", 30),
+        ("breakout", "all", None),
+        ("breakout", "first_30m", None),
+        ("breakout", "last_30m", None),
+        ("breakout", "avoid_midday", None),
+        ("breakout", "all", 30),
+        ("rsi_reversion", "all", None),
+        ("rsi_reversion", "first_30m", None),
+        ("rsi_reversion", "last_30m", None),
+        ("rsi_reversion", "avoid_midday", None),
+        ("rsi_reversion", "all", 30),
     }
     assert all(REGISTRY.validate_spec(item.spec) for item in planned)
 

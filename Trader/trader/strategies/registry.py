@@ -71,6 +71,18 @@ class StrategyRegistry:
             raise ValueError("exec_config.max_position_notional must be > 0 when set")
         if spec.exec_config.stop_loss_bps is not None and spec.exec_config.stop_loss_bps <= 0:
             raise ValueError("exec_config.stop_loss_bps must be > 0 when set")
+        if spec.exec_config.entry_session_window not in {"all", "first_30m", "last_30m", "avoid_midday"}:
+            raise ValueError("exec_config.entry_session_window must be all, first_30m, last_30m, or avoid_midday")
+        if (
+            spec.exec_config.no_new_entry_minutes_before_close is not None
+            and spec.exec_config.no_new_entry_minutes_before_close < 0
+        ):
+            raise ValueError("exec_config.no_new_entry_minutes_before_close must be >= 0 when set")
+        if (
+            spec.exec_config.no_new_entry_minutes_before_close is not None
+            and spec.exec_config.no_new_entry_minutes_before_close > 390
+        ):
+            raise ValueError("exec_config.no_new_entry_minutes_before_close must be <= 390 when set")
         if spec.signal.name not in self.signal_handlers:
             raise ValueError(f"Unknown signal handler: {spec.signal.name}")
         if spec.sizing.name not in self.sizing_handlers:
@@ -112,6 +124,7 @@ class StrategyRegistry:
             "spread_bps": config.spread_bps,
             "max_position_notional": config.max_position_notional,
             "stop_loss_bps": config.stop_loss_bps,
+            "no_new_entry_minutes_before_close": config.no_new_entry_minutes_before_close,
         }
         self._validate_finite_params("exec_config", values)
 

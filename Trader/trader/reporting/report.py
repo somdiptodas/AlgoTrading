@@ -210,6 +210,8 @@ def _render_strategy(spec: StrategySpec) -> str:
             f"spread_bps={spec.exec_config.spread_bps:.2f}, "
             f"max_position_notional={spec.exec_config.max_position_notional}, "
             f"stop_loss_bps={spec.exec_config.stop_loss_bps}, "
+            f"entry_session_window={spec.exec_config.entry_session_window}, "
+            f"no_new_entry_minutes_before_close={spec.exec_config.no_new_entry_minutes_before_close}, "
             f"regular_session_only={spec.exec_config.regular_session_only}, "
             f"flat_at_close={spec.exec_config.flat_at_close}"
         ),

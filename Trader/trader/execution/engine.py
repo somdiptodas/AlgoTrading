@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from trader.data.models import MarketBar
+from trader.data.models import REGULAR_SESSION_END, REGULAR_SESSION_START, MarketBar
 from trader.execution.fills import Trade, enter_long, exit_long, exit_long_at_price
 from trader.execution.position import Position
 from trader.strategies.spec import ExecConfig
@@ -39,7 +39,8 @@ def run_long_only_engine(
         if pending_action is not None:
             action, reason = pending_action
             if action == "enter":
-                cash, position = enter_long(cash, bar, exec_config, sizing_fraction)
+                if entry_allowed(bar, exec_config):
+                    cash, position = enter_long(cash, bar, exec_config, sizing_fraction)
             elif action == "exit" and position is not None:
                 stop_fill_reference = stop_loss_fill_reference(position, bar, exec_config)
                 if stop_fill_reference is not None:
@@ -74,6 +75,8 @@ def run_long_only_engine(
         elif position is None and regime_is_long and not last_bar:
             if exec_config.flat_at_close and next_session_changes:
                 pass
+            elif not entry_allowed(bars[index + 1], exec_config):
+                pass
             else:
                 pending_action = ("enter", "signal_on")
 
@@ -107,3 +110,28 @@ def stop_loss_fill_reference(position: Position, bar: MarketBar, exec_config: Ex
     if bar.low > stop_price:
         return None
     return bar.open if bar.open <= stop_price else stop_price
+
+
+def entry_allowed(bar: MarketBar, exec_config: ExecConfig) -> bool:
+    minutes_since_open = _minutes_since_session_open(bar)
+    minutes_until_close = _minutes_until_session_close(bar)
+    if exec_config.no_new_entry_minutes_before_close is not None:
+        if minutes_until_close <= exec_config.no_new_entry_minutes_before_close:
+            return False
+    if exec_config.entry_session_window == "first_30m":
+        return 0 <= minutes_since_open < 30
+    if exec_config.entry_session_window == "last_30m":
+        return 0 < minutes_until_close <= 30
+    if exec_config.entry_session_window == "avoid_midday":
+        return not (120 <= minutes_since_open < 240)
+    return True
+
+
+def _minutes_since_session_open(bar: MarketBar) -> int:
+    local = bar.dt_local
+    return (local.hour * 60 + local.minute) - (REGULAR_SESSION_START.hour * 60 + REGULAR_SESSION_START.minute)
+
+
+def _minutes_until_session_close(bar: MarketBar) -> int:
+    local = bar.dt_local
+    return (REGULAR_SESSION_END.hour * 60 + REGULAR_SESSION_END.minute) - (local.hour * 60 + local.minute)

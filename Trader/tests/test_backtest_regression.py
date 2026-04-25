@@ -28,6 +28,8 @@ def test_legacy_default_ema_matches_characterized_fixed_window() -> None:
             spread_bps=0.0,
             max_position_notional=None,
             stop_loss_bps=None,
+            entry_session_window="all",
+            no_new_entry_minutes_before_close=None,
             fast_length=20,
             slow_length=80,
             signal_buffer_bps=0.0,

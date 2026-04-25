@@ -112,6 +112,100 @@ def test_stop_loss_preempts_pending_signal_exit_on_gap_through() -> None:
     assert result.trades[0].exit_price == pytest.approx(98.0)
 
 
+def test_entry_session_window_first_30m_blocks_later_entries() -> None:
+    config = ExecConfig(initial_cash=100_000.0, entry_session_window="first_30m")
+    bars = tuple(_bar(index, 100.0) for index in range(35))
+    regime = tuple(index == 31 for index in range(35))
+
+    result = run_long_only_engine(bars, regime, config)
+
+    assert result.trades == tuple()
+
+
+def test_entry_session_window_first_30m_allows_early_entries() -> None:
+    config = ExecConfig(initial_cash=100_000.0, entry_session_window="first_30m")
+    bars = tuple(_bar(index, 100.0) for index in range(5))
+    regime = tuple(index == 0 for index in range(5))
+
+    result = run_long_only_engine(bars, regime, config)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_timestamp_utc == bars[1].timestamp_utc
+
+
+def test_entry_session_window_first_30m_uses_fill_bar_boundary() -> None:
+    config = ExecConfig(initial_cash=100_000.0, entry_session_window="first_30m")
+    bars = tuple(_bar(index, 100.0) for index in range(32))
+    regime = tuple(index == 29 for index in range(32))
+
+    result = run_long_only_engine(bars, regime, config)
+
+    assert result.trades == tuple()
+
+
+def test_entry_session_window_last_30m_allows_late_entries() -> None:
+    config = ExecConfig(initial_cash=100_000.0, entry_session_window="last_30m")
+    bars = tuple(_bar(index, 100.0) for index in range(365))
+    regime = tuple(index == 359 for index in range(365))
+
+    result = run_long_only_engine(bars, regime, config)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_timestamp_utc == bars[360].timestamp_utc
+
+
+def test_entry_session_window_last_30m_blocks_earlier_entries() -> None:
+    config = ExecConfig(initial_cash=100_000.0, entry_session_window="last_30m")
+    bars = tuple(_bar(index, 100.0) for index in range(365))
+    regime = tuple(index == 358 for index in range(365))
+
+    result = run_long_only_engine(bars, regime, config)
+
+    assert result.trades == tuple()
+
+
+def test_entry_session_window_avoid_midday_blocks_midday_entries() -> None:
+    config = ExecConfig(initial_cash=100_000.0, entry_session_window="avoid_midday")
+    bars = tuple(_bar(index, 100.0) for index in range(200))
+    regime = tuple(index == 150 for index in range(200))
+
+    result = run_long_only_engine(bars, regime, config)
+
+    assert result.trades == tuple()
+
+
+def test_entry_session_window_avoid_midday_allows_morning_entries() -> None:
+    config = ExecConfig(initial_cash=100_000.0, entry_session_window="avoid_midday")
+    bars = tuple(_bar(index, 100.0) for index in range(20))
+    regime = tuple(index == 0 for index in range(20))
+
+    result = run_long_only_engine(bars, regime, config)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_timestamp_utc == bars[1].timestamp_utc
+
+
+def test_no_new_entry_cutoff_blocks_entries_before_close() -> None:
+    config = ExecConfig(initial_cash=100_000.0, no_new_entry_minutes_before_close=30)
+    bars = tuple(_bar(index, 100.0) for index in range(365))
+    regime = tuple(index == 360 for index in range(365))
+
+    result = run_long_only_engine(bars, regime, config)
+
+    assert result.trades == tuple()
+
+
+def test_no_new_entry_cutoff_allows_entries_before_cutoff() -> None:
+    config = ExecConfig(initial_cash=100_000.0, no_new_entry_minutes_before_close=30)
+    bars = tuple(_bar(index, 100.0) for index in range(365))
+    regime = tuple(index == 328 for index in range(365))
+
+    result = run_long_only_engine(bars, regime, config)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_timestamp_utc == bars[329].timestamp_utc
+
+
 def test_cost_drag_metrics_use_trade_cost_cash() -> None:
     result = BacktestResult(
         bars=(_bar(0),),
@@ -163,3 +257,13 @@ def test_registry_rejects_invalid_cost_config_values() -> None:
         REGISTRY.validate_spec(StrategySpec(name="bad_notional", exec_config=ExecConfig(max_position_notional=0.0)))
     with pytest.raises(ValueError, match="stop_loss_bps"):
         REGISTRY.validate_spec(StrategySpec(name="bad_stop_loss", exec_config=ExecConfig(stop_loss_bps=0.0)))
+    with pytest.raises(ValueError, match="entry_session_window"):
+        REGISTRY.validate_spec(StrategySpec(name="bad_entry_window", exec_config=ExecConfig(entry_session_window="lunch")))
+    with pytest.raises(ValueError, match="no_new_entry_minutes_before_close"):
+        REGISTRY.validate_spec(
+            StrategySpec(name="bad_entry_cutoff", exec_config=ExecConfig(no_new_entry_minutes_before_close=-1))
+        )
+    with pytest.raises(ValueError, match="no_new_entry_minutes_before_close"):
+        REGISTRY.validate_spec(
+            StrategySpec(name="too_large_entry_cutoff", exec_config=ExecConfig(no_new_entry_minutes_before_close=391))
+        )

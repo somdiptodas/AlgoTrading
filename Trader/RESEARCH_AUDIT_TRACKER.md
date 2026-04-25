@@ -202,11 +202,13 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added `ExecConfig.stop_loss_bps` with registry/backtest validation, reporting, serialization through existing spec payloads, and long-engine stop-loss exits. Stops use filled entry price, handle gap-through at the bar open, and preempt signal/session/final exits when triggered.
   - Verification: `.venv/bin/pytest tests/test_costs.py tests/test_splits_metrics_registry.py tests/test_backtest_regression.py -q` passes 21 tests; `.venv/bin/pytest -q` passes 99 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Add real session-time controls.
+- [x] Add real session-time controls.
   - First 30 minutes only.
   - Last 30 minutes only.
   - Avoid midday.
   - Configurable no-new-entry cutoff before close.
+  - Completed 2026-04-25: added `ExecConfig.entry_session_window` and `no_new_entry_minutes_before_close` with registry/backtest validation, reporting, and planner execution variants. The execution engine gates queued entries on the actual fill bar, covering first-30-minute, last-30-minute, midday-avoidance, and cutoff-before-close behavior.
+  - Verification: `.venv/bin/pytest tests/test_costs.py tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_backtest_regression.py -q` passes 36 tests; `.venv/bin/pytest -q` passes 109 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Add VWAP deviation signal family.
   - Long below VWAP by an entry threshold.

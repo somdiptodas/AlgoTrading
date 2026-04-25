@@ -34,6 +34,8 @@ class BacktestRequest:
     spread_bps: float
     max_position_notional: float | None
     stop_loss_bps: float | None
+    entry_session_window: str
+    no_new_entry_minutes_before_close: int | None
     fast_length: int
     slow_length: int
     signal_buffer_bps: float
@@ -60,6 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--spread-bps", type=float, default=0.0)
     parser.add_argument("--max-position-notional", type=float)
     parser.add_argument("--stop-loss-bps", type=float)
+    parser.add_argument(
+        "--entry-session-window",
+        choices=("all", "first_30m", "last_30m", "avoid_midday"),
+        default="all",
+    )
+    parser.add_argument("--no-new-entry-minutes-before-close", type=int)
     parser.add_argument("--fast-length", type=int, default=20)
     parser.add_argument("--slow-length", type=int, default=80)
     parser.add_argument("--signal-buffer-bps", type=float, default=0.0)
@@ -90,6 +98,10 @@ def parse_args(argv: list[str] | None = None) -> BacktestRequest:
         raise ValueError("--max-position-notional must be > 0 when set")
     if args.stop_loss_bps is not None and args.stop_loss_bps <= 0:
         raise ValueError("--stop-loss-bps must be > 0 when set")
+    if args.no_new_entry_minutes_before_close is not None and args.no_new_entry_minutes_before_close < 0:
+        raise ValueError("--no-new-entry-minutes-before-close must be >= 0 when set")
+    if args.no_new_entry_minutes_before_close is not None and args.no_new_entry_minutes_before_close > 390:
+        raise ValueError("--no-new-entry-minutes-before-close must be <= 390 when set")
     if args.signal_buffer_bps < 0:
         raise ValueError("--signal-buffer-bps must be >= 0")
     start = _parse_datetime(args.start) if args.start else None
@@ -111,6 +123,8 @@ def parse_args(argv: list[str] | None = None) -> BacktestRequest:
         spread_bps=args.spread_bps,
         max_position_notional=args.max_position_notional,
         stop_loss_bps=args.stop_loss_bps,
+        entry_session_window=args.entry_session_window,
+        no_new_entry_minutes_before_close=args.no_new_entry_minutes_before_close,
         fast_length=args.fast_length,
         slow_length=args.slow_length,
         signal_buffer_bps=args.signal_buffer_bps,
@@ -144,6 +158,8 @@ def run_backtest(request: BacktestRequest) -> BacktestResult:
             spread_bps=request.spread_bps,
             max_position_notional=request.max_position_notional,
             stop_loss_bps=request.stop_loss_bps,
+            entry_session_window=request.entry_session_window,
+            no_new_entry_minutes_before_close=request.no_new_entry_minutes_before_close,
             regular_session_only=request.regular_session_only,
             flat_at_close=request.flat_at_close,
         ),
@@ -206,7 +222,9 @@ def _print_summary(result: BacktestResult, request: BacktestRequest) -> None:
     print(
         f"Parameters: fast={request.fast_length} slow={request.slow_length} "
         f"buffer_bps={request.signal_buffer_bps:.2f} slippage_bps={request.slippage_bps:.2f} "
-        f"spread_bps={request.spread_bps:.2f} stop_loss_bps={request.stop_loss_bps}"
+        f"spread_bps={request.spread_bps:.2f} stop_loss_bps={request.stop_loss_bps} "
+        f"entry_session_window={request.entry_session_window} "
+        f"no_new_entry_minutes_before_close={request.no_new_entry_minutes_before_close}"
     )
     print(
         f"Equity: start=${result.initial_cash:,.2f} end=${result.final_cash:,.2f} "
