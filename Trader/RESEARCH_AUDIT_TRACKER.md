@@ -231,11 +231,13 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 
 ## P4 - Future Trading Readiness
 
-- [ ] Add paper-trading adapter boundaries.
+- [x] Add paper-trading adapter boundaries.
   - Broker abstraction.
   - Order IDs and idempotency.
   - Position reconciliation.
   - Trade audit log.
+  - Completed 2026-04-25: added an isolated `trader.paper` boundary package with broker protocol/data contracts, deterministic client order IDs, persistent idempotent order submission, SQLite paper order/audit/reconciliation storage, position reconciliation reports, and JSONL audit helpers. The research/backtest path remains unchanged.
+  - Verification: `.venv/bin/pytest tests/test_paper_trading.py tests/test_costs.py tests/test_ledger.py -q` passes 39 tests; `.venv/bin/pytest -q` passes 157 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Add hard risk controls.
   - Max position notional.
