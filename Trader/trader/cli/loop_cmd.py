@@ -74,8 +74,8 @@ def main(argv: list[str] | None = None) -> None:
     critic = HeuristicCritic()
     loop_run_id = _loop_run_id(args)
 
-    frontier_entries = ledger.top_experiments(limit=args.frontier_limit)
     history_entries = ledger.list_completed(limit=10_000)
+    frontier_entries = ledger.query.promoted_experiments(history_entries, limit=args.frontier_limit)
 
     # --- Build suppressor from history entries that failed robustness gates ---
     suppressor = RegionSuppressor(

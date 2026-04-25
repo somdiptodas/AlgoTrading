@@ -5,6 +5,9 @@ from typing import Iterable, Sequence
 
 from trader.ledger.entry import LedgerEntry
 
+PROMOTED_PROMOTION_STAGES = frozenset({"candidate", "research_frontier"})
+PROMOTION_STAGE_RANK = {"candidate": 3.0, "research_frontier": 2.0, "frontier": 1.0, "exploratory": 1.0}
+
 
 @dataclass(frozen=True)
 class RankedLedgerEntry:
@@ -50,8 +53,12 @@ class LedgerQueryHelper:
         ordered = frontier + remaining
         return tuple(ordered[:limit])
 
+    def promoted_experiments(self, entries: Sequence[LedgerEntry], *, limit: int = 10) -> tuple[LedgerEntry, ...]:
+        promoted = [entry for entry in entries if entry.promotion_stage in PROMOTED_PROMOTION_STAGES]
+        return self.top_experiments(promoted, limit=limit)
+
     def _composite_score(self, entry: LedgerEntry) -> float:
-        stage_rank = {"candidate": 3.0, "frontier": 2.0, "exploratory": 1.0}.get(entry.promotion_stage, 0.0)
+        stage_rank = PROMOTION_STAGE_RANK.get(entry.promotion_stage, 0.0)
         fold_consistency = 1.0 if bool(entry.robustness_checks.get("fold_consistency_pass")) else 0.0
         neighborhood = 1.0 if bool(entry.robustness_checks.get("neighborhood_pass")) else 0.0
         return (

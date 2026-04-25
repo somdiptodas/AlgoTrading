@@ -35,7 +35,7 @@ class HeuristicCritic:
         if not result.robustness_checks.get("fold_consistency_pass", False):
             notes.append("Returns are too concentrated across folds.")
             next_focus.append("Prefer more stable variants over higher headline return.")
-        verdict = "promising" if result.promotion_stage in {"frontier", "candidate"} else "fragile"
+        verdict = "promising" if result.promotion_stage in {"research_frontier", "candidate"} else "fragile"
         if not notes:
             notes.append("Metrics and robustness checks are acceptable for continued search.")
             next_focus.append("Expand the local neighborhood around this spec.")

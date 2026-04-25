@@ -95,9 +95,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added `annualized_sharpe` from direct per-bar equity returns with SPY 1-minute annualization, preserved `sharpe_like`, added annualized baseline deltas, displayed the new metric in reports/artifact summaries, and recomputed aggregate annualized Sharpe from combined fold backtest returns instead of averaging fold Sharpe values.
   - Verification: `.venv/bin/pytest tests/test_splits_metrics_registry.py tests/test_robustness.py -q` passes 18 tests; `.venv/bin/pytest -q` passes 33 tests. Verification subagent reported no blockers.
 
-- [ ] Tighten and rename promotion stages.
+- [x] Tighten and rename promotion stages.
   - `frontier` should not imply tradable edge when alpha is negative.
   - Require positive return, positive risk-adjusted metric, minimum trade count, and relevant benchmark pass for frontier/candidate status.
+  - Completed 2026-04-25: new evaluations now use `research_frontier` instead of `frontier`, and promotion requires all robustness gates, positive return, positive annualized risk-adjusted return, at least 10 trades, and positive buy-and-hold edge. `candidate` additionally requires more than 0.5 percentage points of buy-and-hold edge. Active frontier-neighborhood planning now seeds only from `research_frontier` and `candidate`, while legacy `frontier` rows remain readable but are downgraded for ranking and critic semantics.
+  - Verification: `.venv/bin/pytest tests/test_promotion.py tests/test_ledger.py tests/test_research_queue.py -q` passes 24 tests; `.venv/bin/pytest -q` passes 48 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Add fairer intraday baselines.
   - Keep buy-and-hold, but add baselines that match the strategy's overnight-flat constraint:

@@ -6,6 +6,8 @@ from typing import Iterable, Sequence
 from trader.evaluation.runner import ExperimentResult
 from trader.strategies.spec import StrategySpec
 
+_STAGE_RANK = {"candidate": 3, "research_frontier": 2, "frontier": 1, "exploratory": 1}
+
 
 @dataclass(frozen=True)
 class FrontierRecord:
@@ -42,7 +44,7 @@ class FrontierManager:
         ranked = sorted(
             frontier,
             key=lambda item: (
-                item.promotion_stage == "candidate",
+                _STAGE_RANK.get(item.promotion_stage, 0),
                 item.stability_pass,
                 item.dominates_baseline,
                 item.score_vector["sharpe_like"],

@@ -14,6 +14,7 @@ from trader.evaluation.runner import ExperimentResult, FoldResult
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
 from trader.ledger.entry import LedgerEntry, entry_from_json, experiment_result_to_payload, json_dumps, json_loads
+from trader.ledger.query import LedgerQueryHelper
 import trader.ledger.store as ledger_store_module
 from trader.ledger.store import SCHEMA, LedgerStore
 from trader.reporting.report import render_experiment_report
@@ -99,7 +100,7 @@ def _sample_result() -> ExperimentResult:
         },
         fold_results=(fold,),
         robustness_checks={"fold_consistency_pass": True, "neighborhood_pass": True},
-        promotion_stage="frontier",
+        promotion_stage="research_frontier",
     )
 
 
@@ -237,6 +238,43 @@ def test_top_experiments_ranks_from_scalar_columns_before_deserializing_winners(
 
     assert [entry.experiment_id for entry in top] == ["exp_1"]
     assert parse_count == 1
+
+
+def test_promoted_experiments_excludes_legacy_frontier_stage() -> None:
+    base = _sample_result()
+    entries = (
+        LedgerEntry.from_result(
+            replace(
+                base,
+                experiment_id="legacy_frontier",
+                promotion_stage="frontier",
+                aggregate_metrics={
+                    **base.aggregate_metrics,
+                    "return_pct": -1.0,
+                    "delta_buy_and_hold_return_pct": -5.0,
+                },
+            ),
+            evaluation_key="legacy_frontier_key",
+            artifact_paths={},
+            generator_kind="grid",
+        ),
+        LedgerEntry.from_result(
+            replace(base, experiment_id="research_frontier", promotion_stage="research_frontier"),
+            evaluation_key="research_frontier_key",
+            artifact_paths={},
+            generator_kind="grid",
+        ),
+        LedgerEntry.from_result(
+            replace(base, experiment_id="candidate", promotion_stage="candidate"),
+            evaluation_key="candidate_key",
+            artifact_paths={},
+            generator_kind="grid",
+        ),
+    )
+
+    promoted = LedgerQueryHelper().promoted_experiments(entries, limit=10)
+
+    assert {entry.experiment_id for entry in promoted} == {"research_frontier", "candidate"}
 
 
 def test_initialize_migrates_legacy_ledger_trade_count_and_compacts_json(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ from typing import Any, Sequence
 
 from trader.evaluation.runner import ExperimentResult
 from trader.ledger.entry import LedgerEntry, entry_from_json, entry_to_json, utc_now_iso
-from trader.ledger.query import LedgerQueryHelper
+from trader.ledger.query import PROMOTION_STAGE_RANK, LedgerQueryHelper
 from trader.research.suppressor import SuppressedSpec
 
 
@@ -460,7 +460,7 @@ class LedgerStore:
         )
 
     def _metric_composite_score(self, row: _MetricRow) -> float:
-        stage_rank = {"candidate": 3.0, "frontier": 2.0, "exploratory": 1.0}.get(row.promotion_stage, 0.0)
+        stage_rank = PROMOTION_STAGE_RANK.get(row.promotion_stage, 0.0)
         fold_consistency = 1.0 if row.fold_consistency_pass else 0.0
         neighborhood = 1.0 if row.neighborhood_pass else 0.0
         return (
