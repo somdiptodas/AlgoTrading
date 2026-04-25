@@ -154,9 +154,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added `EvaluationRunner.evaluation_key_for_spec()` to compute the same research evaluation key as preview using validated spec hash, current data snapshot, holdout-adjusted split plan, and cost model id. `DeterministicCandidateQueue` now rejects historical and same-batch duplicate evaluation keys before building previews, while preserving preview, duplicate, selection, and suppression counts.
   - Verification: `.venv/bin/pytest tests/test_research_queue.py -q` passes 6 tests; `.venv/bin/pytest -q` passes 77 tests. Verification subagent reported no blockers.
 
-- [ ] Limit preview work.
+- [x] Limit preview work.
   - Cheap-rank candidates first using params/history.
   - Preview only a bounded multiple of final batch size.
+  - Completed 2026-04-25: added a named `--preview-factor` loop cap and a cheap pre-preview ranking pass in `DeterministicCandidateQueue` using existing family history, parent score, generator kind, novelty, and required-history signals. The queue now caps preview creation while continuing to scan evaluation keys so duplicate accounting remains uncapped.
+  - Verification: `.venv/bin/pytest tests/test_loop_cmd.py tests/test_research_queue.py -q` passes 10 tests; `.venv/bin/pytest -q` passes 80 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Fix suppressor geometry.
   - Normalize parameter distances by registry-known min/max ranges or grid steps.

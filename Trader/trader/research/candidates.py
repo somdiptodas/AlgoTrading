@@ -7,6 +7,7 @@ from trader.evaluation.runner import EvaluationPreview, EvaluationRunner
 from trader.ledger.entry import LedgerEntry
 from trader.research.planner import PlannedSpec
 from trader.research.suppressor import RegionSuppressor, SuppressedSpec, spec_distance
+from trader.strategies.spec import StrategySpec
 
 
 @dataclass(frozen=True)
@@ -52,13 +53,14 @@ class DeterministicCandidateQueue:
         num_folds: int,
         embargo_bars: int,
         locked_holdout_months: int | None = None,
+        max_preview_count: int | None = None,
     ) -> CandidateQueueResult:
         candidates: list[ScoredCandidate] = []
         suppression_records: list[SuppressedSpec] = []
         previewed_count = 0
         duplicate_count = 0
         queued_evaluation_keys: set[str] = set()
-        for planned in planned_specs:
+        for planned in self._cheap_rank_plans(planned_specs, runner):
             try:
                 evaluation_key = runner.evaluation_key_for_spec(
                     planned.spec,
@@ -74,6 +76,9 @@ class DeterministicCandidateQueue:
             if evaluation_key in queued_evaluation_keys:
                 duplicate_count += 1
                 continue
+            queued_evaluation_keys.add(evaluation_key)
+            if max_preview_count is not None and previewed_count >= max_preview_count:
+                continue
             try:
                 preview = runner.preview_walk_forward(
                     planned.spec,
@@ -84,7 +89,6 @@ class DeterministicCandidateQueue:
             except Exception:
                 continue
             previewed_count += 1
-            queued_evaluation_keys.add(evaluation_key)
             family = preview.spec.signal.name
             novelty = self._novelty_to_history(preview)
             parent_score = self._parent_score(planned)
@@ -112,6 +116,41 @@ class DeterministicCandidateQueue:
             previewed_count=previewed_count,
             duplicate_count=duplicate_count,
             suppression_records=tuple(suppression_records),
+        )
+
+    def _cheap_rank_plans(
+        self,
+        planned_specs: Sequence[PlannedSpec],
+        runner: EvaluationRunner,
+    ) -> tuple[PlannedSpec, ...]:
+        return tuple(
+            sorted(
+                planned_specs,
+                key=lambda planned: (
+                    self._cheap_score(planned, runner),
+                    planned.spec.spec_hash(),
+                ),
+                reverse=True,
+            )
+        )
+
+    def _cheap_score(self, planned: PlannedSpec, runner: EvaluationRunner) -> float:
+        try:
+            spec = runner.registry.validate_spec(planned.spec)
+            required_history = runner.registry.required_history(spec)
+        except ValueError:
+            return float("-inf")
+        family_count = self._family_counts.get(spec.signal.name, 0)
+        family_quota_boost = float(self._max_family_count - family_count)
+        generator_boost = 25.0 if planned.generator_kind == "frontier_neighborhood" else 0.0
+        simplicity_boost = max(0.0, 20.0 - (required_history / 10.0))
+        return (
+            generator_boost
+            + (family_quota_boost * 3.0)
+            + self._family_quality(spec.signal.name)
+            + (self._parent_score(planned) * 0.25)
+            + (self._novelty_to_history_spec(spec) * 10.0)
+            + simplicity_boost
         )
 
     def _select_candidates(self, candidates: Sequence[ScoredCandidate]) -> tuple[ScoredCandidate, ...]:
@@ -213,11 +252,14 @@ class DeterministicCandidateQueue:
         return max(scores, default=0.0)
 
     def _novelty_to_history(self, preview: EvaluationPreview) -> float:
-        family_entries = self._history_by_family.get(preview.spec.signal.name, ())
+        return self._novelty_to_history_spec(preview.spec)
+
+    def _novelty_to_history_spec(self, spec: StrategySpec) -> float:
+        family_entries = self._history_by_family.get(spec.signal.name, ())
         if not family_entries:
             return 1.0
         distances = [
-            self._spec_distance(preview.spec.to_payload(include_name=False), entry.spec.to_payload(include_name=False))
+            self._spec_distance(spec.to_payload(include_name=False), entry.spec.to_payload(include_name=False))
             for entry in family_entries
         ]
         return min(distances) if distances else 1.0

@@ -21,6 +21,7 @@ from trader.strategies.registry import REGISTRY
 
 _ALL_SIGNAL_FAMILIES = ("ema_cross", "breakout", "rsi_reversion")
 DEFAULT_OVERPLAN_FACTOR = 12
+DEFAULT_PREVIEW_FACTOR = 4
 MIN_PLANNED_SPECS = 64
 
 
@@ -33,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_OVERPLAN_FACTOR,
         help=f"Plan this many specs per requested batch slot before preview selection (default: {DEFAULT_OVERPLAN_FACTOR})",
+    )
+    parser.add_argument(
+        "--preview-factor",
+        type=int,
+        default=DEFAULT_PREVIEW_FACTOR,
+        help=f"Preview at most this many specs per requested batch slot (default: {DEFAULT_PREVIEW_FACTOR})",
     )
     parser.add_argument("--folds", type=int, default=3)
     parser.add_argument("--embargo-bars", type=int, default=1)
@@ -72,6 +79,10 @@ def _loop_run_id(args: argparse.Namespace) -> str:
 
 def _planned_spec_count(batch_size: int, overplan_factor: int) -> int:
     return max(batch_size * overplan_factor, MIN_PLANNED_SPECS)
+
+
+def _max_preview_count(batch_size: int, preview_factor: int) -> int:
+    return max(batch_size, batch_size * preview_factor)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -120,6 +131,7 @@ def main(argv: list[str] | None = None) -> None:
         num_folds=args.folds,
         embargo_bars=args.embargo_bars,
         locked_holdout_months=args.holdout_months,
+        max_preview_count=_max_preview_count(args.batch_size, args.preview_factor),
     )
 
     # --- Persist suppression audit records to the ledger ---

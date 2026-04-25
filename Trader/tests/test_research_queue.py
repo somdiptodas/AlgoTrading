@@ -259,3 +259,59 @@ def test_candidate_queue_prefers_underexplored_family_when_scores_are_close(tmp_
 
     assert len(queue_result.selected) == 2
     assert queue_result.selected[0].family == "breakout"
+
+
+def test_candidate_queue_limits_previews_after_cheap_ranking(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    queue = DeterministicCandidateQueue(history_entries=(), frontier_entries=())
+    queue_result = queue.build(
+        planned_specs=(
+            PlannedSpec(
+                _spec("ema_candidate", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+            PlannedSpec(
+                _spec("breakout_candidate", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0}),
+                generator_kind="frontier_neighborhood",
+            ),
+        ),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+        max_preview_count=1,
+    )
+
+    assert queue_result.previewed_count == 1
+    assert len(queue_result.selected) == 1
+    assert queue_result.selected[0].family == "breakout"
+    assert queue_result.selected[0].planned.generator_kind == "frontier_neighborhood"
+
+
+def test_candidate_queue_counts_duplicates_beyond_preview_limit(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    queue = DeterministicCandidateQueue(history_entries=(), frontier_entries=())
+    spec = _spec("breakout_candidate", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0})
+    renamed_spec = _spec(
+        "breakout_candidate_renamed",
+        "breakout",
+        {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0},
+    )
+
+    queue_result = queue.build(
+        planned_specs=(
+            PlannedSpec(spec, generator_kind="frontier_neighborhood"),
+            PlannedSpec(renamed_spec, generator_kind="frontier_neighborhood"),
+        ),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+        max_preview_count=1,
+    )
+
+    assert queue_result.previewed_count == 1
+    assert queue_result.duplicate_count == 1
+    assert len(queue_result.selected) == 1
