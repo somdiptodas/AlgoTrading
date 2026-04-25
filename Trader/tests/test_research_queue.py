@@ -195,6 +195,7 @@ def test_candidate_queue_tracks_suppressed_previewed_candidates(tmp_path: Path) 
     assert queue_result.previewed_count == 2
     assert len(queue_result.suppression_records) == 2
     assert len(queue_result.selected) == 2
+    assert all(candidate.suppression_record is not None for candidate in queue_result.selected)
 
 
 def test_runner_includes_intraday_baseline_deltas(tmp_path: Path) -> None:

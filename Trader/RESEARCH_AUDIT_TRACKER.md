@@ -167,8 +167,10 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: `RegionSuppressor` now uses registry-derived per-family parameter ranges/steps for suppression distance while leaving candidate novelty/diversity distance semantics unchanged. Suppression weights now vary by failed gate type, and single nearby failures receive only a small penalty while repeated nearby failures can reach the cap.
   - Verification: `.venv/bin/pytest tests/test_suppressor.py tests/test_research_queue.py tests/test_loop_cmd.py -q` passes 15 tests; `.venv/bin/pytest -q` passes 85 tests. Verification subagent reported no blockers.
 
-- [ ] Separate suppression audit types.
+- [x] Separate suppression audit types.
   - Distinguish selected/evaluated suppression decisions from discarded preview noise.
+  - Completed 2026-04-25: added a backward-compatible `audit_type` to suppression logs, including migration for existing ledgers. The loop now classifies suppressed preview records after evaluation as `evaluated` or `preview_discarded`, keeps total suppression counts compatible, and reports the split in the suppressor summary/counts.
+  - Verification: `.venv/bin/pytest tests/test_ledger.py tests/test_research_queue.py tests/test_loop_cmd.py -q` passes 24 tests; `.venv/bin/pytest -q` passes 88 tests. Verification subagent reported no blockers.
 
 - [ ] Wire critic output into planning.
   - Convert notes such as poor fold consistency, excessive trading, or benchmark failure into scoring penalties or planner constraints.

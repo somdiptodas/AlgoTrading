@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from trader.evaluation.runner import ExperimentResult
 from trader.ledger.entry import LedgerEntry, entry_from_json, entry_to_json, utc_now_iso
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS suppression_log (
     failed_check_names TEXT NOT NULL,
     failure_count_in_radius INTEGER NOT NULL DEFAULT 0,
     suppression_weight REAL NOT NULL,
+    audit_type TEXT NOT NULL DEFAULT 'previewed',
     logged_at_utc TEXT NOT NULL
 );
 
@@ -278,6 +279,8 @@ class LedgerStore:
         self,
         loop_run_id: str,
         records: Sequence[SuppressedSpec],
+        *,
+        audit_type_by_spec_hash: Mapping[str, str] | None = None,
     ) -> int:
         """
         Persist suppression audit records for this loop run.
@@ -296,6 +299,7 @@ class LedgerStore:
                 json.dumps(list(record.failed_check_names)),
                 record.failure_count_in_radius,
                 record.suppression_weight,
+                (audit_type_by_spec_hash or {}).get(record.spec_hash, "previewed"),
                 now,
             )
             for record in records
@@ -307,8 +311,8 @@ class LedgerStore:
                     loop_run_id, spec_hash, signal_family,
                     nearest_failure_experiment_id, nearest_failure_distance,
                     failed_check_names, failure_count_in_radius,
-                    suppression_weight, logged_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    suppression_weight, audit_type, logged_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -329,6 +333,16 @@ class LedgerStore:
                 """,
                 (loop_run_id,),
             ).fetchall()
+            type_rows = connection.execute(
+                """
+                SELECT audit_type, COUNT(*) AS count
+                FROM suppression_log
+                WHERE loop_run_id = ?
+                GROUP BY audit_type
+                ORDER BY audit_type
+                """,
+                (loop_run_id,),
+            ).fetchall()
         return {
             "loop_run_id": loop_run_id,
             "by_family": [
@@ -340,6 +354,13 @@ class LedgerStore:
                 }
                 for row in rows
             ],
+            "by_type": [
+                {
+                    "audit_type": str(row["audit_type"]),
+                    "suppressed_count": int(row["count"]),
+                }
+                for row in type_rows
+            ],
         }
 
     def _connect(self) -> sqlite3.Connection:
@@ -348,6 +369,12 @@ class LedgerStore:
         return connection
 
     def _ensure_columns(self, connection: sqlite3.Connection) -> None:
+        suppression_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(suppression_log)").fetchall()
+        }
+        if "audit_type" not in suppression_columns:
+            connection.execute("ALTER TABLE suppression_log ADD COLUMN audit_type TEXT NOT NULL DEFAULT 'previewed'")
         columns = {
             str(row["name"])
             for row in connection.execute("PRAGMA table_info(ledger_entries)").fetchall()

@@ -16,7 +16,7 @@ from trader.research.critic import HeuristicCritic
 from trader.research.frontier import FrontierManager
 from trader.research.generator import StrategyGenerator
 from trader.research.planner import DeterministicPlanner
-from trader.research.suppressor import RegionSuppressor
+from trader.research.suppressor import RegionSuppressor, SuppressedSpec
 from trader.strategies.registry import REGISTRY
 
 _ALL_SIGNAL_FAMILIES = ("ema_cross", "breakout", "rsi_reversion")
@@ -85,6 +85,16 @@ def _max_preview_count(batch_size: int, preview_factor: int) -> int:
     return max(batch_size, batch_size * preview_factor)
 
 
+def _suppression_audit_types(
+    records: tuple[SuppressedSpec, ...],
+    evaluated_spec_hashes: set[str],
+) -> dict[str, str]:
+    return {
+        record.spec_hash: "evaluated" if record.spec_hash in evaluated_spec_hashes else "preview_discarded"
+        for record in records
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     settings = load_settings(database_path=args.database)
@@ -135,10 +145,6 @@ def main(argv: list[str] | None = None) -> None:
         max_preview_count=_max_preview_count(args.batch_size, args.preview_factor),
     )
 
-    # --- Persist suppression audit records to the ledger ---
-    suppression_logged = ledger.log_suppression_batch(loop_run_id, queue_result.suppression_records)
-    suppression_summary = ledger.suppression_summary(loop_run_id) if suppression_logged > 0 else {}
-
     completed = []
     reused = queue_result.duplicate_count
     selected_candidates = queue_result.selected[: args.batch_size]
@@ -156,6 +162,16 @@ def main(argv: list[str] | None = None) -> None:
         )
         completed.append(result)
 
+    # --- Persist suppression audit records to the ledger ---
+    evaluated_spec_hashes = {result.spec_hash for result in completed}
+    audit_type_by_spec_hash = _suppression_audit_types(queue_result.suppression_records, evaluated_spec_hashes)
+    suppression_logged = ledger.log_suppression_batch(
+        loop_run_id,
+        queue_result.suppression_records,
+        audit_type_by_spec_hash=audit_type_by_spec_hash,
+    )
+    suppression_summary = ledger.suppression_summary(loop_run_id) if suppression_logged > 0 else {}
+
     frontier = frontier_manager.rank([entry.to_result() for entry in ledger.top_experiments(limit=args.frontier_limit)])
     print(json_dumps(
         {
@@ -172,12 +188,17 @@ def main(argv: list[str] | None = None) -> None:
                 "evaluated": len(completed),
                 "duplicate": queue_result.duplicate_count,
                 "suppressed": suppression_logged,
+                "suppressed_evaluated": sum(1 for value in audit_type_by_spec_hash.values() if value == "evaluated"),
+                "suppressed_preview_discarded": sum(
+                    1 for value in audit_type_by_spec_hash.values() if value == "preview_discarded"
+                ),
             },
             "rejected": list(generated.rejected),
             "suppressor": {
                 **suppressor.summary(),
                 "candidates_suppressed": suppression_logged,
                 "by_family": suppression_summary.get("by_family", []),
+                "by_type": suppression_summary.get("by_type", []),
             },
             "frontier": [
                 {

@@ -24,6 +24,7 @@ from trader.ledger.entry import (
 from trader.ledger.query import LedgerQueryHelper
 import trader.ledger.store as ledger_store_module
 from trader.ledger.store import SCHEMA, LedgerStore
+from trader.research.suppressor import SuppressedSpec
 from trader.reporting.report import render_experiment_report
 from trader.strategies.spec import SignalSpec, StrategySpec
 
@@ -131,6 +132,90 @@ def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:
     assert len(ledger.top_experiments()) == 1
     for path in artifact_paths.values():
         assert Path(path).exists()
+
+
+def test_suppression_log_separates_audit_types(tmp_path: Path) -> None:
+    ledger = LedgerStore(tmp_path / "ledger.db")
+    ledger.initialize()
+    evaluated = SuppressedSpec(
+        spec_hash="evaluated_hash",
+        signal_family="ema_cross",
+        nearest_failure_experiment_id="failure_1",
+        nearest_failure_distance=0.0,
+        failed_check_names=("neighborhood_pass",),
+        failure_count_in_radius=2,
+        suppression_weight=20.0,
+    )
+    discarded = SuppressedSpec(
+        spec_hash="discarded_hash",
+        signal_family="ema_cross",
+        nearest_failure_experiment_id="failure_2",
+        nearest_failure_distance=0.1,
+        failed_check_names=("regime_pass",),
+        failure_count_in_radius=1,
+        suppression_weight=5.0,
+    )
+
+    logged = ledger.log_suppression_batch(
+        "loop_1",
+        (evaluated, discarded),
+        audit_type_by_spec_hash={
+            "evaluated_hash": "evaluated",
+            "discarded_hash": "preview_discarded",
+        },
+    )
+    summary = ledger.suppression_summary("loop_1")
+
+    assert logged == 2
+    assert summary["by_type"] == [
+        {"audit_type": "evaluated", "suppressed_count": 1},
+        {"audit_type": "preview_discarded", "suppressed_count": 1},
+    ]
+
+
+def test_legacy_suppression_log_gets_audit_type_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "ledger.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE suppression_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loop_run_id TEXT NOT NULL,
+                spec_hash TEXT NOT NULL,
+                signal_family TEXT NOT NULL,
+                nearest_failure_experiment_id TEXT NOT NULL,
+                nearest_failure_distance REAL NOT NULL,
+                failed_check_names TEXT NOT NULL,
+                failure_count_in_radius INTEGER NOT NULL DEFAULT 0,
+                suppression_weight REAL NOT NULL,
+                logged_at_utc TEXT NOT NULL
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO suppression_log (
+                loop_run_id, spec_hash, signal_family,
+                nearest_failure_experiment_id, nearest_failure_distance,
+                failed_check_names, failure_count_in_radius,
+                suppression_weight, logged_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("loop_legacy", "legacy_hash", "ema_cross", "failure_1", 0.0, "[]", 1, 5.0, "2026-01-01T00:00:00+00:00"),
+        )
+
+    ledger = LedgerStore(db_path)
+    ledger.initialize()
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(suppression_log)").fetchall()}
+        audit_type = connection.execute(
+            "SELECT audit_type FROM suppression_log WHERE spec_hash = ?",
+            ("legacy_hash",),
+        ).fetchone()[0]
+
+    assert "audit_type" in columns
+    assert audit_type == "previewed"
 
 
 def test_ledger_entry_json_is_compact_and_artifacts_keep_full_details(tmp_path: Path) -> None:

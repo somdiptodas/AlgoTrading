@@ -18,6 +18,7 @@ class ScoredCandidate:
     static_score: float
     novelty_to_history: float
     parent_score: float
+    suppression_record: SuppressedSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,7 @@ class DeterministicCandidateQueue:
                     static_score=static_score,
                     novelty_to_history=novelty,
                     parent_score=parent_score,
+                    suppression_record=suppression_record,
                 )
             )
         return CandidateQueueResult(
