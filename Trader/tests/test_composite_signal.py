@@ -39,25 +39,25 @@ def _fake_handler(regime: list[bool], *, required_history: int = 0) -> dict[str,
 
 
 @pytest.mark.parametrize(
-        ("params", "expected"),
-        (
-            ({"combiner": "all"}, [True, False, False]),
-            ({"combiner": "any"}, [True, True, True]),
-            ({"combiner": "vote_k_of_n", "min_agreeing": 2}, [True, True, True]),
-            ({"combiner": "vote_k_of_n", "min_agreeing": 3}, [True, False, False]),
-            ({"combiner": "primary_plus_confirmations", "primary_index": 1}, [True, False, False]),
-        ),
-    )
+    ("params", "expected"),
+    (
+        ({"combiner": "all"}, [True, False, False]),
+        ({"combiner": "any"}, [True, True, True]),
+        ({"combiner": "vote_k_of_n", "min_agreeing": 2}, [True, True, True]),
+        ({"combiner": "vote_k_of_n", "min_agreeing": 3}, [True, False, False]),
+        ({"combiner": "primary_plus_confirmations", "primary_index": 1}, [True, False, False]),
+    ),
+)
 def test_composite_combines_child_regimes(monkeypatch: pytest.MonkeyPatch, params: dict[str, object], expected: list[bool]) -> None:
     monkeypatch.setattr(
         composite,
         "_SIGNAL_HANDLERS",
-            {
-                "a": _fake_handler([True, False, True]),
-                "b": _fake_handler([True, True, False]),
-                "c": _fake_handler([True, True, True]),
-            },
-        )
+        {
+            "a": _fake_handler([True, False, True]),
+            "b": _fake_handler([True, True, False]),
+            "c": _fake_handler([True, True, True]),
+        },
+    )
     normalized = composite.normalize_params(
         {
             **params,
@@ -225,3 +225,68 @@ def test_composite_signal_does_not_peek_forward() -> None:
     altered_regime = composite.generate_regime(history_bars, tuple(altered_test_bars), params)
 
     assert base_regime[0] == altered_regime[0]
+
+
+@pytest.mark.parametrize(
+    "signal_params",
+    (
+        {
+            "combiner": "all",
+            "children": [
+                {"name": "ema_cross", "params": {"fast_length": 2, "slow_length": 5}},
+                {"name": "breakout", "params": {"entry_window": 6, "exit_window": 3}},
+            ],
+        },
+        {
+            "combiner": "any",
+            "children": [
+                {"name": "rsi_reversion", "params": {"rsi_length": 5, "oversold_threshold": 35.0, "overbought_threshold": 65.0}},
+                {"name": "vwap_deviation", "params": {"entry_deviation_bps": 10.0, "exit_deviation_bps": 0.0, "max_hold_bars": 5}},
+            ],
+        },
+        {
+            "combiner": "vote_k_of_n",
+            "min_agreeing": 2,
+            "children": [
+                {"name": "ema_cross", "params": {"fast_length": 3, "slow_length": 8}},
+                {"name": "breakout", "params": {"entry_window": 8, "exit_window": 4}},
+                {"name": "rsi_reversion", "params": {"rsi_length": 5, "oversold_threshold": 35.0, "overbought_threshold": 65.0}},
+            ],
+        },
+        {
+            "combiner": "primary_plus_confirmations",
+            "primary_index": 0,
+            "children": [
+                {"name": "ema_cross", "params": {"fast_length": 2, "slow_length": 5}},
+                {"name": "breakout", "params": {"entry_window": 6, "exit_window": 3}},
+            ],
+        },
+    ),
+)
+def test_composite_outputs_are_unchanged_when_only_future_test_bars_change(signal_params: dict[str, object]) -> None:
+    history_bars = tuple(_bar(index, 100.0 + ((index % 9) - 4) * 0.35, vwap=100.0) for index in range(80))
+    base_test_bars = tuple(
+        _bar(80 + index, 101.0 + ((index % 7) - 3) * 0.4, vwap=101.25)
+        for index in range(12)
+    )
+    spec = REGISTRY.validate_spec(
+        StrategySpec(
+            name="composite_prefix_invariance",
+            signal=SignalSpec("composite", signal_params),
+        )
+    )
+    base_regime = REGISTRY.generate_regime(spec, history_bars, base_test_bars)
+    assert any(base_regime)
+
+    for prefix_end in range(len(base_test_bars) - 1):
+        altered_test_bars = list(base_test_bars)
+        for future_index in range(prefix_end + 1, len(altered_test_bars)):
+            altered_test_bars[future_index] = _bar(
+                80 + future_index,
+                150.0 + future_index,
+                vwap=75.0,
+            )
+
+        altered_regime = REGISTRY.generate_regime(spec, history_bars, tuple(altered_test_bars))
+
+        assert altered_regime[:prefix_end + 1] == base_regime[:prefix_end + 1]

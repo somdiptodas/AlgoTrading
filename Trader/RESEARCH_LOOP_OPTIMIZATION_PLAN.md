@@ -286,7 +286,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: Added a first-class `composite` signal handler that normalizes 2-4 child signal payloads, combines existing child regimes with deterministic `all`, `any`, `vote_k_of_n`, and `primary_plus_confirmations` modes, reports max child required history, and emits bounded one-child-at-a-time robustness neighbors.
   - Verification: focused composite/registry/leakage tests passed (`.venv/bin/pytest -q tests/test_composite_signal.py tests/test_splits_metrics_registry.py tests/test_leakage.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
-- [ ] **Composite leakage tests** (M6) by transitively asserting children's leakage tests still hold under composition.
+- [x] **Composite leakage tests** (M6) by transitively asserting children's leakage tests still hold under composition.
+  - Completed: 2026-04-25
+  - Implementation: Added composite prefix-invariance coverage that mutates only future test bars and asserts prior outputs remain unchanged across `all`, `any`, `vote_k_of_n`, and `primary_plus_confirmations` composites using real child signals.
+  - Verification: focused composite/leakage tests passed (`.venv/bin/pytest -q tests/test_composite_signal.py tests/test_leakage.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
 - [ ] **Composite planner bucket** with the 6 canonical composites in M5 (NOT a full cross-product). Cap composite specs at ~24 per loop.
 - [ ] **Replace family-quota boost with a UCB bandit allocator** (S2) keyed on per-family best-return and evaluation count.
 - [ ] **Optuna/TPE sampler per family after seed grid is exhausted** (S2). Ledger-return as objective; persist study state in `data/research/optuna/`.
