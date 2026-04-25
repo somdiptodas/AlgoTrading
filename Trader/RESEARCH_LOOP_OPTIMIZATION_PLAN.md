@@ -263,7 +263,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: `EvaluationRunner` now owns a fold-scoped indicator cache used by `FeaturePipeline` for EMA, RSI, rolling-high, and rolling-low test slices; cached values are immutable internally and scoped by snapshot plus fold train/test window.
   - Verification: focused indicator/leakage/runner tests passed (`.venv/bin/pytest -q tests/test_indicator_cache.py tests/test_leakage.py tests/test_robustness.py tests/test_costs.py tests/test_baselines.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
-- [ ] **Cap planner overplan factor at 4** once stage-A exists (S8). Reduce wasted preview/eval-key compute.
+- [x] **Cap planner overplan factor at 4** once stage-A exists (S8). Reduce wasted preview/eval-key compute.
+  - Completed: 2026-04-25
+  - Implementation: loop default `DEFAULT_OVERPLAN_FACTOR` is now 4 while preserving the explicit `--overplan-factor` override and minimum planned-spec floor.
+  - Verification: focused loop CLI tests passed (`.venv/bin/pytest -q tests/test_loop_cmd.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
 - [ ] **Add `delta_exposure_adjusted_buy_and_hold_pct` and use it as the candidate gate** (V1). The current `delta_buy_and_hold > 0.5` is structurally unwinnable for low-exposure strategies in a bull market. This is the *single biggest reason* nothing has promoted.
 - [ ] **Fix vwap_deviation churn** (G10). Add `min_bars_between_entries` (cooldown) and `max_entries_per_session` to the signal params; default cooldown 30 bars, max 4 entries/day.
 - [ ] **Add per-phase timing JSON** to loop output (rev 1 P0 carryover): planning, key compute, preview, queue scoring, stage A, stage B, robustness neighbors, artifact write, ledger write.
