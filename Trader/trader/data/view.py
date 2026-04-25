@@ -52,6 +52,7 @@ class DataView:
                 low=float(row["low"]),
                 close=float(row["close"]),
                 volume=float(row["volume"] or 0.0),
+                vwap=float(row["vwap"]) if row["vwap"] is not None else None,
             )
             if regular_session_only and not bar.is_regular_session:
                 continue
@@ -107,14 +108,15 @@ class DataView:
         digest = sha256()
         for bar in bars:
             digest.update(
-                f"{bar.timestamp_ms}|{bar.open:.6f}|{bar.high:.6f}|{bar.low:.6f}|{bar.close:.6f}|{bar.volume:.6f}".encode(
-                    "utf-8"
-                )
+                (
+                    f"{bar.timestamp_ms}|{bar.open:.6f}|{bar.high:.6f}|{bar.low:.6f}|"
+                    f"{bar.close:.6f}|{bar.volume:.6f}|{_format_optional_float(bar.vwap)}"
+                ).encode("utf-8")
             )
         return digest.hexdigest()
 
     @staticmethod
-    def bars_to_payload(bars: Iterable[MarketBar]) -> list[dict[str, float | int | str]]:
+    def bars_to_payload(bars: Iterable[MarketBar]) -> list[dict[str, float | int | str | None]]:
         return [
             {
                 "timestamp_ms": bar.timestamp_ms,
@@ -124,6 +126,11 @@ class DataView:
                 "low": bar.low,
                 "close": bar.close,
                 "volume": bar.volume,
+                "vwap": bar.vwap,
             }
             for bar in bars
         ]
+
+
+def _format_optional_float(value: float | None) -> str:
+    return "None" if value is None else f"{value:.6f}"

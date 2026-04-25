@@ -49,6 +49,7 @@ def market_bar_to_payload(bar: MarketBar) -> dict[str, object]:
         "low": bar.low,
         "close": bar.close,
         "volume": bar.volume,
+        "vwap": bar.vwap,
     }
 
 
@@ -61,6 +62,7 @@ def market_bar_from_payload(payload: dict[str, Any]) -> MarketBar:
         low=float(payload["low"]),
         close=float(payload["close"]),
         volume=float(payload["volume"]),
+        vwap=float(payload["vwap"]) if payload.get("vwap") is not None else None,
     )
 
 

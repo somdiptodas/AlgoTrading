@@ -6,7 +6,7 @@ from typing import Callable
 
 from trader.data.models import MarketBar
 from trader.strategies.filters import session
-from trader.strategies.signals import breakout, ema_cross, rsi_reversion
+from trader.strategies.signals import breakout, ema_cross, rsi_reversion, vwap_deviation
 from trader.strategies.sizers import fixed_fraction, full_notional
 from trader.strategies.spec import FilterSpec, SignalSpec, StrategySpec
 
@@ -37,6 +37,13 @@ class StrategyRegistry:
                 "generate_regime": rsi_reversion.generate_regime,
                 "parameter_grid": rsi_reversion.parameter_grid,
                 "neighbors": rsi_reversion.neighbors,
+            },
+            "vwap_deviation": {
+                "normalize_params": vwap_deviation.normalize_params,
+                "required_history": vwap_deviation.required_history,
+                "generate_regime": vwap_deviation.generate_regime,
+                "parameter_grid": vwap_deviation.parameter_grid,
+                "neighbors": vwap_deviation.neighbors,
             },
         }
         self.sizing_handlers = {

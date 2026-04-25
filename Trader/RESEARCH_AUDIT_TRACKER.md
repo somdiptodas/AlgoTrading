@@ -210,9 +210,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added `ExecConfig.entry_session_window` and `no_new_entry_minutes_before_close` with registry/backtest validation, reporting, and planner execution variants. The execution engine gates queued entries on the actual fill bar, covering first-30-minute, last-30-minute, midday-avoidance, and cutoff-before-close behavior.
   - Verification: `.venv/bin/pytest tests/test_costs.py tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_backtest_regression.py -q` passes 36 tests; `.venv/bin/pytest -q` passes 109 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Add VWAP deviation signal family.
+- [x] Add VWAP deviation signal family.
   - Long below VWAP by an entry threshold.
   - Exit at VWAP reversion, timeout, stop, or close.
+  - Completed 2026-04-25: added a registered `vwap_deviation` signal family that enters when close is below VWAP by a configured threshold, exits on VWAP reversion or `max_hold_bars` timeout, and relies on existing stop-loss/session-close execution controls for stop and close exits. Stored VWAP now flows into `MarketBar`, data hashes, and ledger/artifact payload round trips; the deterministic loop can plan the new family.
+  - Verification: `.venv/bin/pytest tests/test_vwap_deviation.py tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_leakage.py tests/test_research_queue.py -q` passes 44 tests; `.venv/bin/pytest -q` passes 122 tests. Verification subagent reported no blockers.
 
 - [ ] Add volatility and volume regime filters.
   - Intraday realized volatility percentile.

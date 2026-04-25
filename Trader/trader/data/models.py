@@ -67,6 +67,7 @@ class MarketBar:
     low: float
     close: float
     volume: float
+    vwap: float | None = None
 
     @property
     def dt_utc(self) -> datetime:
