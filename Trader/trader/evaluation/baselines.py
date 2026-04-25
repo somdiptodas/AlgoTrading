@@ -3,7 +3,7 @@ from __future__ import annotations
 from statistics import mean
 
 from trader.data.models import MarketBar
-from trader.evaluation.metrics import max_drawdown_pct, sharpe_like
+from trader.evaluation.metrics import annualized_sharpe, max_drawdown_pct, sharpe_like
 
 
 def evaluate_baselines(bars: tuple[MarketBar, ...], initial_cash: float) -> dict[str, dict[str, float]]:
@@ -16,6 +16,7 @@ def evaluate_baselines(bars: tuple[MarketBar, ...], initial_cash: float) -> dict
 def always_flat(initial_cash: float) -> dict[str, float]:
     return {
         "return_pct": 0.0,
+        "annualized_sharpe": 0.0,
         "sharpe_like": 0.0,
         "max_drawdown_pct": 0.0,
         "exposure_pct": 0.0,
@@ -35,6 +36,7 @@ def buy_and_hold(bars: tuple[MarketBar, ...], initial_cash: float) -> dict[str, 
     total_return_pct = ((bars[-1].close / starting_close) - 1.0) * 100.0
     return {
         "return_pct": total_return_pct,
+        "annualized_sharpe": annualized_sharpe(equity_curve, starting_equity=initial_cash),
         "sharpe_like": sharpe_like(equity_curve),
         "max_drawdown_pct": max_drawdown_pct(equity_curve),
         "exposure_pct": 100.0,
@@ -50,5 +52,8 @@ def baseline_deltas(metrics: dict[str, float], baselines: dict[str, dict[str, fl
     deltas: dict[str, float] = {}
     for baseline_name, baseline_metrics in baselines.items():
         deltas[f"delta_{baseline_name}_return_pct"] = metrics["return_pct"] - baseline_metrics["return_pct"]
+        deltas[f"delta_{baseline_name}_annualized_sharpe"] = (
+            metrics["annualized_sharpe"] - baseline_metrics["annualized_sharpe"]
+        )
         deltas[f"delta_{baseline_name}_sharpe_like"] = metrics["sharpe_like"] - baseline_metrics["sharpe_like"]
     return deltas

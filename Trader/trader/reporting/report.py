@@ -28,6 +28,7 @@ ContextInput = ReportSectionContext | str | Sequence[str] | Mapping[str, object]
 
 _PRIMARY_METRIC_ORDER = (
     "return_pct",
+    "annualized_sharpe",
     "sharpe_like",
     "max_drawdown_pct",
     "exposure_pct",
@@ -37,6 +38,8 @@ _PRIMARY_METRIC_ORDER = (
     "avg_trade_pct",
     "delta_always_flat_return_pct",
     "delta_buy_and_hold_return_pct",
+    "delta_always_flat_annualized_sharpe",
+    "delta_buy_and_hold_annualized_sharpe",
     "delta_always_flat_sharpe_like",
     "delta_buy_and_hold_sharpe_like",
 )
@@ -58,6 +61,7 @@ _ROBUSTNESS_ORDER = (
 
 _METRIC_LABELS = {
     "return_pct": "Return",
+    "annualized_sharpe": "Annualized Sharpe",
     "sharpe_like": "Sharpe-like",
     "max_drawdown_pct": "Max drawdown",
     "exposure_pct": "Exposure",
@@ -67,6 +71,8 @@ _METRIC_LABELS = {
     "avg_trade_pct": "Average trade",
     "delta_always_flat_return_pct": "Return vs always flat",
     "delta_buy_and_hold_return_pct": "Return vs buy and hold",
+    "delta_always_flat_annualized_sharpe": "Annualized Sharpe vs always flat",
+    "delta_buy_and_hold_annualized_sharpe": "Annualized Sharpe vs buy and hold",
     "delta_always_flat_sharpe_like": "Sharpe-like vs always flat",
     "delta_buy_and_hold_sharpe_like": "Sharpe-like vs buy and hold",
     "fold_consistency_pass": "Fold consistency pass",
@@ -348,7 +354,7 @@ def _format_metric_value(name: str, value: float | bool) -> str:
     if name.endswith("_pct"):
         signed = name in _SIGNED_PERCENT_METRICS
         return f"{value:+.2f}%" if signed else f"{value:.2f}%"
-    if name in {"sharpe_like", "profit_factor", "positive_fold_ratio"}:
+    if name in {"annualized_sharpe", "sharpe_like", "profit_factor", "positive_fold_ratio"}:
         return _format_number(value)
     return _format_number(value)
 

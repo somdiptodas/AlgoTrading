@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from trader.data.models import MarketBar
 from trader.data.view import DataSlice
+from trader.evaluation.metrics import annualized_sharpe_for_backtests
 from trader.evaluation.robustness import RobustnessResult, _monthly_strategy_pnl_breakdown, assess_robustness
 from trader.evaluation.runner import EvaluationPreview, EvaluationRunner, FoldResult
 from trader.evaluation.splits import Fold
@@ -233,3 +236,72 @@ def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypat
     assert neighbor_fold_ids == ["fold_1", "fold_2", "fold_3"]
     assert captured_neighbor_metrics["return_pct"] == 3.8
     assert captured_neighbor_metrics["sharpe_like"] == 0.38
+
+
+def test_evaluate_preview_annualized_sharpe_uses_combined_fold_returns(monkeypatch) -> None:
+    runner = EvaluationRunner.__new__(EvaluationRunner)
+    folds = (_fold("fold_1"), _fold("fold_2"))
+    starting_equity = 100_000.0
+    fold_backtests = {
+        "fold_1": BacktestResult(
+            bars=_bars(2),
+            trades=tuple(),
+            equity_curve=(starting_equity * 1.001, starting_equity * 1.001 * 0.9995),
+            initial_cash=starting_equity,
+            final_cash=starting_equity * 1.001 * 0.9995,
+        ),
+        "fold_2": BacktestResult(
+            bars=_bars(1),
+            trades=tuple(),
+            equity_curve=(starting_equity * 1.0015,),
+            initial_cash=starting_equity,
+            final_cash=starting_equity * 1.0015,
+        ),
+    }
+    preview = EvaluationPreview(
+        spec=REGISTRY.validate_spec(
+            StrategySpec(
+                name="ema_test",
+                signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+            )
+        ),
+        data_slice=DataSlice(
+            bars=tuple(),
+            snapshot_id="snapshot",
+            first_timestamp_utc=None,
+            last_timestamp_utc=None,
+        ),
+        split_plan_id="split-plan",
+        folds=folds,
+        required_history=80,
+        cost_model_id="cost-model",
+        evaluation_key="evaluation-key",
+    )
+
+    def fake_evaluate_fold(fold_spec: StrategySpec, fold: Fold, bars) -> FoldResult:
+        backtest = fold_backtests[fold.fold_id]
+        return FoldResult(
+            fold_id=fold.fold_id,
+            train_start_utc=fold.train_start_utc,
+            train_end_utc=fold.train_end_utc,
+            test_start_utc=fold.test_start_utc,
+            test_end_utc=fold.test_end_utc,
+            metrics={
+                "return_pct": 1.0,
+                "annualized_sharpe": -999.0,
+                "sharpe_like": 0.1,
+                "max_drawdown_pct": 1.0,
+            },
+            baseline_metrics={},
+            baseline_deltas={},
+            warnings=tuple(),
+            backtest=backtest,
+        )
+
+    monkeypatch.setattr(runner, "_evaluate_fold", fake_evaluate_fold)
+
+    _, aggregate_metrics = runner._evaluate_preview_folds(preview.spec, preview)
+
+    assert aggregate_metrics["annualized_sharpe"] == pytest.approx(
+        annualized_sharpe_for_backtests(tuple(fold_backtests.values()))
+    )

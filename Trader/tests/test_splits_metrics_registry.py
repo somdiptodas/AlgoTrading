@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta, timezone
+from statistics import mean
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from trader.data.models import MarketBar
 from trader.cli.eval_cmd import _load_payload
-from trader.evaluation.metrics import aggregate_metric_dicts, calculate_metrics
+from trader.evaluation.baselines import baseline_deltas
+from trader.evaluation.metrics import MINUTE_BARS_PER_YEAR, aggregate_metric_dicts, annualized_sharpe, calculate_metrics
 from trader.evaluation.splits import build_walk_forward_folds
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
@@ -65,6 +68,44 @@ def test_metrics_on_known_trade_series() -> None:
     assert metrics["trade_count"] == 2.0
     assert metrics["win_rate_pct"] == 50.0
     assert metrics["max_drawdown_pct"] >= 0.0
+    assert "annualized_sharpe" in metrics
+
+
+def test_annualized_sharpe_uses_per_bar_returns_directly() -> None:
+    starting_equity = 100_000.0
+    returns = (0.001, -0.0005, 0.0015)
+    equity = []
+    current = starting_equity
+    for period_return in returns:
+        current *= 1.0 + period_return
+        equity.append(current)
+
+    avg_return = mean(returns)
+    variance = mean([(value - avg_return) ** 2 for value in returns])
+    expected = math.sqrt(MINUTE_BARS_PER_YEAR) * avg_return / math.sqrt(variance)
+
+    assert annualized_sharpe(tuple(equity), starting_equity=starting_equity) == pytest.approx(expected)
+
+
+def test_baseline_deltas_include_annualized_sharpe() -> None:
+    deltas = baseline_deltas(
+        {
+            "return_pct": 3.0,
+            "annualized_sharpe": 1.5,
+            "sharpe_like": 0.6,
+        },
+        {
+            "buy_and_hold": {
+                "return_pct": 1.0,
+                "annualized_sharpe": 0.25,
+                "sharpe_like": 0.2,
+            },
+        },
+    )
+
+    assert deltas["delta_buy_and_hold_return_pct"] == 2.0
+    assert deltas["delta_buy_and_hold_annualized_sharpe"] == 1.25
+    assert deltas["delta_buy_and_hold_sharpe_like"] == pytest.approx(0.4)
 
 
 def test_aggregate_metrics_weights_by_fold_size() -> None:

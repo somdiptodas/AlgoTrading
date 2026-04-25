@@ -122,6 +122,7 @@ class ArtifactStore:
             f"- Family: `{result.spec.signal.name}`",
             f"- Promotion stage: `{result.promotion_stage}`",
             f"- Return %: `{result.aggregate_metrics.get('return_pct', 0.0):.3f}`",
+            f"- Annualized Sharpe: `{result.aggregate_metrics.get('annualized_sharpe', 0.0):.3f}`",
             f"- Sharpe-like: `{result.aggregate_metrics.get('sharpe_like', 0.0):.3f}`",
             f"- Max drawdown %: `{result.aggregate_metrics.get('max_drawdown_pct', 0.0):.3f}`",
             "",

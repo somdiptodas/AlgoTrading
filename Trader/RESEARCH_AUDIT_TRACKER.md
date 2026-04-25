@@ -89,9 +89,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 
 ## P1 - Evaluation Quality And Promotion Semantics
 
-- [ ] Add a proper annualized risk metric.
+- [x] Add a proper annualized risk metric.
   - Compute annualized Sharpe from per-bar or per-session returns directly.
   - Keep `sharpe_like` only as a backward-compatible internal field if needed.
+  - Completed 2026-04-25: added `annualized_sharpe` from direct per-bar equity returns with SPY 1-minute annualization, preserved `sharpe_like`, added annualized baseline deltas, displayed the new metric in reports/artifact summaries, and recomputed aggregate annualized Sharpe from combined fold backtest returns instead of averaging fold Sharpe values.
+  - Verification: `.venv/bin/pytest tests/test_splits_metrics_registry.py tests/test_robustness.py -q` passes 18 tests; `.venv/bin/pytest -q` passes 33 tests. Verification subagent reported no blockers.
 
 - [ ] Tighten and rename promotion stages.
   - `frontier` should not imply tradable edge when alpha is negative.

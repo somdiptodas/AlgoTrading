@@ -7,7 +7,7 @@ from typing import Sequence
 from trader.data.models import MarketBar
 from trader.data.view import DataSlice, DataView
 from trader.evaluation.baselines import baseline_deltas, evaluate_baselines
-from trader.evaluation.metrics import aggregate_metric_dicts, calculate_metrics
+from trader.evaluation.metrics import aggregate_metric_dicts, annualized_sharpe_for_backtests, calculate_metrics
 from trader.evaluation.promotion import promotion_stage
 from trader.evaluation.robustness import RobustnessResult, assess_robustness
 from trader.evaluation.splits import Fold, build_walk_forward_folds
@@ -228,6 +228,9 @@ class EvaluationRunner:
         aggregate_metrics = aggregate_metric_dicts(
             [fold.metrics | fold.baseline_deltas for fold in fold_results],
             weights=[len(fold.backtest.bars) for fold in fold_results],
+        )
+        aggregate_metrics["annualized_sharpe"] = annualized_sharpe_for_backtests(
+            [fold.backtest for fold in fold_results]
         )
         return fold_results, aggregate_metrics
 
