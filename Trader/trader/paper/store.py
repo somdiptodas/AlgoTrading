@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from trader.ledger.entry import json_dumps, json_loads
 from trader.paper.audit import AuditEvent
 from trader.paper.models import OrderAck, OrderRequest
 from trader.paper.reconcile import PositionMismatch, ReconciliationReport
+
+
+NEW_YORK = ZoneInfo("America/New_York")
 
 
 SCHEMA = """
@@ -41,6 +46,19 @@ CREATE TABLE IF NOT EXISTS paper_reconciliation_reports (
     mismatch_count INTEGER NOT NULL,
     report_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS paper_daily_risk (
+    trading_day TEXT PRIMARY KEY,
+    realized_pnl_cash REAL NOT NULL,
+    updated_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS paper_kill_switch (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL
+);
 """
 
 
@@ -62,6 +80,61 @@ class PaperTradingStore:
         if row is None:
             return None
         return _order_ack_from_payload(dict(json_loads(row["ack_json"], default={})))
+
+    def accepted_order_count_for_trading_day(self, trading_day: str) -> int:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT submitted_at_utc
+                FROM paper_orders
+                WHERE status IN ('submitted', 'accepted', 'filled')
+                """,
+            ).fetchall()
+        return sum(1 for row in rows if _trading_day(str(row["submitted_at_utc"])) == trading_day)
+
+    def set_daily_realized_pnl(self, trading_day: str, pnl_cash: float, *, updated_at_utc: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO paper_daily_risk (trading_day, realized_pnl_cash, updated_at_utc)
+                VALUES (?, ?, ?)
+                ON CONFLICT(trading_day) DO UPDATE SET
+                    realized_pnl_cash = excluded.realized_pnl_cash,
+                    updated_at_utc = excluded.updated_at_utc
+                """,
+                (trading_day, pnl_cash, updated_at_utc),
+            )
+
+    def get_daily_realized_pnl(self, trading_day: str) -> float:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT realized_pnl_cash FROM paper_daily_risk WHERE trading_day = ?",
+                (trading_day,),
+            ).fetchone()
+        return 0.0 if row is None else float(row["realized_pnl_cash"])
+
+    def set_kill_switch(self, enabled: bool, *, reason: str, updated_at_utc: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO paper_kill_switch (id, enabled, reason, updated_at_utc)
+                VALUES (1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    enabled = excluded.enabled,
+                    reason = excluded.reason,
+                    updated_at_utc = excluded.updated_at_utc
+                """,
+                (1 if enabled else 0, reason, updated_at_utc),
+            )
+
+    def get_kill_switch(self) -> tuple[bool, str]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT enabled, reason FROM paper_kill_switch WHERE id = 1",
+            ).fetchone()
+        if row is None:
+            return False, ""
+        return bool(row["enabled"]), str(row["reason"])
 
     def get_order_request(self, client_order_id: str) -> OrderRequest | None:
         with self._connect() as connection:
@@ -215,6 +288,7 @@ def _order_request_from_payload(payload: dict[str, Any]) -> OrderRequest:
         client_order_id=str(payload.get("client_order_id", "")),
         strategy_id=str(payload.get("strategy_id", "")),
         limit_price=None if payload.get("limit_price") is None else float(payload["limit_price"]),
+        reference_price=None if payload.get("reference_price") is None else float(payload["reference_price"]),
     )
 
 
@@ -234,3 +308,7 @@ def _reconciliation_report_from_payload(payload: dict[str, Any]) -> Reconciliati
             for item in payload.get("mismatches", ())
         ),
     )
+
+
+def _trading_day(timestamp_utc: str) -> str:
+    return datetime.fromisoformat(timestamp_utc).astimezone(NEW_YORK).date().isoformat()

@@ -20,6 +20,7 @@ class OrderRequest:
     client_order_id: str = ""
     strategy_id: str = ""
     limit_price: float | None = None
+    reference_price: float | None = None
 
 
 @dataclass(frozen=True)

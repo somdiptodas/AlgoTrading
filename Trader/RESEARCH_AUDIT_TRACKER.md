@@ -239,12 +239,14 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added an isolated `trader.paper` boundary package with broker protocol/data contracts, deterministic client order IDs, persistent idempotent order submission, SQLite paper order/audit/reconciliation storage, position reconciliation reports, and JSONL audit helpers. The research/backtest path remains unchanged.
   - Verification: `.venv/bin/pytest tests/test_paper_trading.py tests/test_costs.py tests/test_ledger.py -q` passes 39 tests; `.venv/bin/pytest -q` passes 157 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Add hard risk controls.
+- [x] Add hard risk controls.
   - Max position notional.
   - Max daily loss.
   - Max orders per day.
   - Kill switch.
   - No-trade calendar/event windows.
+  - Completed 2026-04-25: added paper-trading risk controls for projected max position notional, persistent daily loss limits, persistent max-orders-per-NY-trading-day checks, persistent kill switch state, and configured no-trade NY dates/UTC event windows. Gateway risk checks run only for new submissions after idempotent replay checks and write `risk_blocked` audit events on rejects.
+  - Verification: `.venv/bin/pytest tests/test_paper_risk.py tests/test_paper_trading.py tests/test_costs.py tests/test_ledger.py -q` passes 50 tests; `.venv/bin/pytest -q` passes 168 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Add live data integrity checks.
   - Stale quote/bar detection.
