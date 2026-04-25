@@ -14,7 +14,7 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 - Best observed absolute return: about +2.11%, still about -10.63 percentage points behind buy-and-hold.
 - Research storage size: about 7.0 GB total, including 4.8 GB artifacts and 2.2 GB `ledger.db`.
 - Ledger JSON payload size: about 2.24 GB total, averaging about 31 MB per ledger row.
-- Test status: `.venv/bin/pytest -q` passes 18 tests as of 2026-04-25 after adding strategy-specific monthly PnL concentration coverage.
+- Test status: `.venv/bin/pytest -q` passes 19 tests as of 2026-04-25 after fixing full-fold neighbor robustness evaluation.
 
 ## Verification Of Claude Audit
 
@@ -26,7 +26,7 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 - Aggregate metrics are simple unweighted means across folds.
 - `sharpe_like` is not a conventional annualized Sharpe ratio.
 - The legacy backtest regression is broken because it runs over all available data while expecting an older shorter data window.
-- Neighborhood robustness evaluates neighbors on only the first fold.
+- Before the 2026-04-25 fix, neighborhood robustness evaluated neighbors on only the first fold.
 - The production generator dedupe hook is effectively dead because the loop passes `seen_evaluation_key=lambda spec: False`.
 - `fixed_fraction` exists and is registered but the planner never emits it.
 - Critic output is mostly decorative; it does not directly steer planning or scoring.
@@ -56,9 +56,12 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Compatibility: kept `regime_pass` and `monthly_concentration_pct`; added explicit positive/loss monthly PnL concentration fields for reports and ledger payloads.
   - Verification: `.venv/bin/pytest -q` passes 18 tests.
 
-- [ ] Evaluate robustness neighbors across the same full walk-forward plan.
+- [x] Evaluate robustness neighbors across the same full walk-forward plan.
   - Current behavior compares aggregate candidate metrics against neighbors evaluated only on fold 1.
   - Use the same folds and aggregation path for candidate and neighbors.
+  - Completed 2026-04-25: `EvaluationRunner.evaluate_preview` now evaluates candidate and neighbor specs through the same `_evaluate_preview_folds` helper, using the preview's full fold set and shared aggregate metric path.
+  - Regression coverage: added a runner-level test proving neighbor metrics are collected from every fold and aggregated instead of using only fold 1.
+  - Verification: `.venv/bin/pytest tests/test_robustness.py -q` passes 6 tests; `.venv/bin/pytest -q` passes 19 tests.
 
 - [ ] Replace unweighted fold aggregation.
   - Prefer combined out-of-sample equity metrics.
@@ -199,7 +202,7 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 
 1. Fix the broken regression test.
 2. Sanitize metric serialization and compact ledger/artifact payloads.
-3. Fix neighbor robustness and fold aggregation.
+3. Fix fold aggregation.
 4. Tighten promotion semantics and add fair intraday baselines.
 5. Add explicit planner allocation, early dedupe, and bounded previews.
 6. Fix suppressor distance scaling.

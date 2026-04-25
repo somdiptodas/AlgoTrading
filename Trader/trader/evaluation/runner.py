@@ -117,8 +117,7 @@ class EvaluationRunner:
         include_robustness: bool = True,
         experiment_id: str | None = None,
     ) -> ExperimentResult:
-        fold_results = tuple(self._evaluate_fold(preview.spec, fold, preview.data_slice.bars) for fold in preview.folds)
-        aggregate_metrics = aggregate_metric_dicts([fold.metrics | fold.baseline_deltas for fold in fold_results])
+        fold_results, aggregate_metrics = self._evaluate_preview_folds(preview.spec, preview)
         experiment_id = experiment_id or sha256(preview.evaluation_key.encode("utf-8")).hexdigest()[:16]
         robustness = (
             assess_robustness(
@@ -127,11 +126,10 @@ class EvaluationRunner:
                 fold_metrics=[fold.metrics for fold in fold_results],
                 fold_backtests=[fold.backtest for fold in fold_results],
                 registry=self.registry,
-                neighbor_metric_fn=lambda neighbor_spec: self._evaluate_fold(
+                neighbor_metric_fn=lambda neighbor_spec: self._evaluate_preview_folds(
                     neighbor_spec,
-                    preview.folds[0],
-                    preview.data_slice.bars,
-                ).metrics,
+                    preview,
+                )[1],
             )
             if include_robustness
             else RobustnessResult(checks={}, passed=False)
@@ -220,6 +218,15 @@ class EvaluationRunner:
         )
         self._fold_result_cache[cache_key] = fold_result
         return fold_result
+
+    def _evaluate_preview_folds(
+        self,
+        spec: StrategySpec,
+        preview: EvaluationPreview,
+    ) -> tuple[tuple[FoldResult, ...], dict[str, float]]:
+        fold_results = tuple(self._evaluate_fold(spec, fold, preview.data_slice.bars) for fold in preview.folds)
+        aggregate_metrics = aggregate_metric_dicts([fold.metrics | fold.baseline_deltas for fold in fold_results])
+        return fold_results, aggregate_metrics
 
     def evaluation_key(
         self,

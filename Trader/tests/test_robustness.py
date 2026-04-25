@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from trader.evaluation.robustness import _monthly_strategy_pnl_breakdown, assess_robustness
+from trader.data.view import DataSlice
+from trader.evaluation.robustness import RobustnessResult, _monthly_strategy_pnl_breakdown, assess_robustness
+from trader.evaluation.runner import EvaluationPreview, EvaluationRunner, FoldResult
+from trader.evaluation.splits import Fold
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
+from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import SignalSpec, StrategySpec
 
 
@@ -33,6 +37,21 @@ def _backtest(trades: tuple[Trade, ...]) -> BacktestResult:
         equity_curve=(100_000.0, final_cash),
         initial_cash=100_000.0,
         final_cash=final_cash,
+    )
+
+
+def _fold(fold_id: str) -> Fold:
+    return Fold(
+        fold_id=fold_id,
+        train_start_idx=0,
+        train_end_idx=0,
+        test_start_idx=0,
+        test_end_idx=0,
+        embargo_bars=0,
+        train_start_utc="2026-01-01T14:30:00+00:00",
+        train_end_utc="2026-01-01T14:30:00+00:00",
+        test_start_utc="2026-01-01T14:31:00+00:00",
+        test_end_utc="2026-01-01T14:31:00+00:00",
     )
 
 
@@ -117,3 +136,77 @@ def test_regime_pass_fails_without_positive_monthly_pnl() -> None:
 
     assert checks["positive_monthly_pnl_present"] is False
     assert checks["regime_pass"] is False
+
+
+def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypatch) -> None:
+    runner = EvaluationRunner.__new__(EvaluationRunner)
+    runner.registry = REGISTRY
+    runner._fold_result_cache = {}
+    folds = (_fold("fold_1"), _fold("fold_2"), _fold("fold_3"))
+    fold_returns = {"fold_1": 1.0, "fold_2": 3.0, "fold_3": 5.0}
+    neighbor_fold_ids: list[str] = []
+    captured_neighbor_metrics: dict[str, float] = {}
+
+    spec = StrategySpec(
+        name="ema_test",
+        signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+    )
+    preview = EvaluationPreview(
+        spec=REGISTRY.validate_spec(spec),
+        data_slice=DataSlice(
+            bars=tuple(),
+            snapshot_id="snapshot",
+            first_timestamp_utc=None,
+            last_timestamp_utc=None,
+        ),
+        split_plan_id="split-plan",
+        folds=folds,
+        required_history=80,
+        cost_model_id="cost-model",
+        evaluation_key="evaluation-key",
+    )
+
+    def fake_evaluate_fold(fold_spec: StrategySpec, fold: Fold, bars) -> FoldResult:
+        if fold_spec.name.startswith("ema_cross_"):
+            neighbor_fold_ids.append(fold.fold_id)
+            return_pct = fold_returns[fold.fold_id]
+        else:
+            return_pct = 2.0
+        return FoldResult(
+            fold_id=fold.fold_id,
+            train_start_utc=fold.train_start_utc,
+            train_end_utc=fold.train_end_utc,
+            test_start_utc=fold.test_start_utc,
+            test_end_utc=fold.test_end_utc,
+            metrics={
+                "return_pct": return_pct,
+                "sharpe_like": return_pct / 10.0,
+                "max_drawdown_pct": 1.0,
+            },
+            baseline_metrics={},
+            baseline_deltas={},
+            warnings=tuple(),
+            backtest=_backtest(tuple()),
+        )
+
+    def fake_assess_robustness(*, neighbor_metric_fn, registry, spec, **kwargs) -> RobustnessResult:
+        neighbor_spec = registry.neighbors(spec)[0]
+        captured_neighbor_metrics.update(neighbor_metric_fn(neighbor_spec))
+        return RobustnessResult(
+            checks={
+                "fold_consistency_pass": True,
+                "regime_pass": True,
+                "neighborhood_pass": True,
+                "drawdown_pass": True,
+            },
+            passed=True,
+        )
+
+    monkeypatch.setattr(runner, "_evaluate_fold", fake_evaluate_fold)
+    monkeypatch.setattr("trader.evaluation.runner.assess_robustness", fake_assess_robustness)
+
+    runner.evaluate_preview(preview)
+
+    assert neighbor_fold_ids == ["fold_1", "fold_2", "fold_3"]
+    assert captured_neighbor_metrics["return_pct"] == 3.0
+    assert captured_neighbor_metrics["sharpe_like"] == 0.3
