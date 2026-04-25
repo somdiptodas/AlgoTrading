@@ -7,6 +7,7 @@ from pathlib import Path
 from trader.config import load_settings
 from trader.data.view import DataView
 from trader.evaluation.runner import EvaluationRunner
+from trader.ledger.entry import json_dumps
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import StrategySpec
 
@@ -38,14 +39,25 @@ def main(argv: list[str] | None = None) -> None:
     )
     print(f"experiment_id={result.experiment_id}")
     print(f"spec_hash={result.spec_hash}")
-    print(json.dumps(result.aggregate_metrics, indent=2, sort_keys=True))
+    print(json_dumps(result.aggregate_metrics, pretty=True))
     if result.robustness_checks:
-        print(json.dumps(result.robustness_checks, indent=2, sort_keys=True))
+        print(json_dumps(result.robustness_checks, pretty=True))
 
 
 def _load_payload(spec_file: str | None, spec_json: str | None) -> dict[str, object]:
-    if spec_file:
-        return json.loads(Path(spec_file).read_text(encoding="utf-8"))
-    if spec_json:
-        return json.loads(spec_json)
+    try:
+        if spec_file:
+            return _loads_strategy_json(Path(spec_file).read_text(encoding="utf-8"))
+        if spec_json:
+            return _loads_strategy_json(spec_json)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid strategy JSON: {exc}") from exc
     raise ValueError("spec payload missing")
+
+
+def _loads_strategy_json(payload: str) -> dict[str, object]:
+    return json.loads(payload, parse_constant=_reject_non_standard_json_constant)
+
+
+def _reject_non_standard_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON numeric value is not supported: {value}")

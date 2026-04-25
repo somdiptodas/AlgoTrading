@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 
 from trader.config import load_settings
+from trader.ledger.entry import json_dumps
 from trader.ledger.store import LedgerStore
 
 
@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> None:
             "recent_completed": [_summary_item(entry) for entry in recent],
             "top_experiments": [_summary_item(entry) for entry in top],
         }
-        print(json.dumps(payload, indent=2, sort_keys=True))
+        print(json_dumps(payload, pretty=True))
         return
 
     raise SystemExit(f"Unknown ledger command: {args.command}")

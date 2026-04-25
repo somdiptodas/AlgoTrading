@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import datetime, timezone
 from hashlib import sha256
 
@@ -9,6 +8,7 @@ from trader.artifacts.store import ArtifactStore
 from trader.config import load_settings
 from trader.data.view import DataView
 from trader.evaluation.runner import EvaluationRunner
+from trader.ledger.entry import json_dumps
 from trader.ledger.store import LedgerStore
 from trader.reporting.report import render_experiment_report
 from trader.research.candidates import DeterministicCandidateQueue
@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> None:
         completed.append(result)
 
     frontier = frontier_manager.rank([entry.to_result() for entry in ledger.top_experiments(limit=args.frontier_limit)])
-    print(json.dumps(
+    print(json_dumps(
         {
             "loop_run_id": loop_run_id,
             "signal_families": list(signal_families),
@@ -153,6 +153,5 @@ def main(argv: list[str] | None = None) -> None:
                 for item in frontier
             ],
         },
-        indent=2,
-        sort_keys=True,
+        pretty=True,
     ))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -17,15 +18,26 @@ def utc_now_iso() -> str:
 
 
 def json_dumps(value: object, *, pretty: bool = False) -> str:
+    value = _sanitize_json_value(value)
     if pretty:
-        return json.dumps(value, indent=2, sort_keys=True, allow_nan=True)
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=True)
+        return json.dumps(value, indent=2, sort_keys=True, allow_nan=False)
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _sanitize_json_value(value: object) -> object:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _sanitize_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_json_value(item) for item in value]
+    return value
 
 
 def json_loads(payload: str | bytes | bytearray | None, default: Any = None) -> Any:
     if payload in (None, ""):
         return default
-    return json.loads(payload)
+    return json.loads(payload, parse_constant=lambda _: None)
 
 
 def market_bar_to_payload(bar: MarketBar) -> dict[str, object]:
@@ -101,12 +113,14 @@ def backtest_from_payload(payload: dict[str, Any]) -> BacktestResult:
 
 
 def _float_dict(payload: dict[str, Any]) -> dict[str, float]:
-    return {str(key): float(value) for key, value in payload.items()}
+    return {str(key): float(value) for key, value in payload.items() if value is not None}
 
 
 def _robustness_dict(payload: dict[str, Any]) -> dict[str, float | bool]:
     normalized: dict[str, float | bool] = {}
     for key, value in payload.items():
+        if value is None:
+            continue
         normalized[str(key)] = bool(value) if isinstance(value, bool) else float(value)
     return normalized
 

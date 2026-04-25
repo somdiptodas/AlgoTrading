@@ -30,7 +30,7 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 - The production generator dedupe hook is effectively dead because the loop passes `seen_evaluation_key=lambda spec: False`.
 - `fixed_fraction` exists and is registered but the planner never emits it.
 - Critic output is mostly decorative; it does not directly steer planning or scoring.
-- `profit_factor` can serialize as non-standard JSON `Infinity`; all current result artifacts contain at least one `Infinity` occurrence.
+- Before the 2026-04-25 fix, `profit_factor` could serialize as non-standard JSON `Infinity`, and result artifacts contained `Infinity` occurrences.
 - Artifact manifests currently write `"generator_kind": null`.
 - Session filters are validated and hashed, but execution behavior is controlled by `ExecConfig.regular_session_only`, so filters can create different hashes for identical execution behavior.
 
@@ -70,9 +70,13 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Regression coverage: added direct weighted aggregation coverage and updated the robustness neighbor test so unequal fold bar counts produce weighted aggregate neighbor metrics.
   - Verification: `.venv/bin/pytest tests/test_splits_metrics_registry.py tests/test_robustness.py -q` passes 11 tests.
 
-- [ ] Fix non-standard JSON values.
+- [x] Fix non-standard JSON values.
   - Replace `Infinity`, `-Infinity`, and `NaN` serialization with `null` or bounded sentinel values.
   - Set `allow_nan=False` once metrics are sanitized.
+  - Completed 2026-04-25: added recursive JSON sanitization for ledger/artifact/CLI payloads, writing non-finite floats as `null` with `allow_nan=False`; legacy ledger JSON constants now read back as null and null metric fields are skipped on reconstruction.
+  - Compatibility: strategy spec JSON output now uses `allow_nan=False`; `eval` strategy JSON input rejects `NaN`, `Infinity`, and `-Infinity`; strategy validation rejects non-finite numeric exec/signal/sizing/filter values.
+  - Data cleanup: sanitized the existing ignored `data/research/ledger.db` rows and artifact JSON files; follow-up scans found 0 ledger rows and 0 artifact JSON files containing `Infinity`, `-Infinity`, or `NaN`.
+  - Verification: `.venv/bin/pytest tests/test_ledger.py tests/test_splits_metrics_registry.py -q` passes 12 tests; `.venv/bin/pytest -q` passes 26 tests.
 
 - [ ] Compact ledger storage.
   - Keep only compact summary fields in `ledger_entries.entry_json`.

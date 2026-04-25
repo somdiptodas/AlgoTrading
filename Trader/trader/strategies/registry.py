@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from typing import Callable
 
@@ -55,6 +56,7 @@ class StrategyRegistry:
             raise ValueError("Only SPY is supported in v1")
         if spec.multiplier != 1 or spec.timespan != "minute":
             raise ValueError("Only SPY 1-minute bars are supported in v1")
+        self._validate_exec_config(spec)
         if spec.exec_config.initial_cash <= 0:
             raise ValueError("exec_config.initial_cash must be > 0")
         if spec.exec_config.commission_per_order < 0:
@@ -67,6 +69,8 @@ class StrategyRegistry:
             raise ValueError(f"Unknown sizing handler: {spec.sizing.name}")
         normalized_signal = self.signal_handlers[spec.signal.name]["normalize_params"](spec.signal.params)
         normalized_sizing = self.sizing_handlers[spec.sizing.name]["normalize_params"](spec.sizing.params)
+        self._validate_finite_params(spec.signal.name, normalized_signal)
+        self._validate_finite_params(spec.sizing.name, normalized_sizing)
         normalized_filters = tuple(self._validate_filter(filter_spec) for filter_spec in spec.filters)
         normalized = replace(
             spec,
@@ -80,7 +84,22 @@ class StrategyRegistry:
         if filter_spec.name not in self.filter_handlers:
             raise ValueError(f"Unknown filter handler: {filter_spec.name}")
         normalized = self.filter_handlers[filter_spec.name]["normalize_params"](filter_spec.params)
+        self._validate_finite_params(filter_spec.name, normalized)
         return FilterSpec(name=filter_spec.name, params=normalized)
+
+    def _validate_exec_config(self, spec: StrategySpec) -> None:
+        config = spec.exec_config
+        values = {
+            "initial_cash": config.initial_cash,
+            "commission_per_order": config.commission_per_order,
+            "slippage_bps": config.slippage_bps,
+        }
+        self._validate_finite_params("exec_config", values)
+
+    def _validate_finite_params(self, scope: str, params: dict[str, object]) -> None:
+        for name, value in params.items():
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"{scope}.{name} must be finite")
 
     def required_history(self, spec: StrategySpec) -> int:
         validated = self.validate_spec(spec)

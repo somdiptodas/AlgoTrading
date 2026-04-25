@@ -36,7 +36,7 @@ class ExecConfig:
     flat_at_close: bool = True
 
     def cost_model_id(self) -> str:
-        payload = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
+        payload = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"), allow_nan=False)
         return sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -75,7 +75,12 @@ class StrategySpec:
         return payload
 
     def canonical_json(self, *, include_name: bool = True) -> str:
-        return json.dumps(self.to_payload(include_name=include_name), sort_keys=True, separators=(",", ":"))
+        return json.dumps(
+            self.to_payload(include_name=include_name),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
 
     def spec_hash(self) -> str:
         # Display names do not change execution semantics and must not affect dedupe.

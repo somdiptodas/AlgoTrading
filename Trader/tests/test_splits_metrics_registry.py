@@ -6,12 +6,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trader.data.models import MarketBar
+from trader.cli.eval_cmd import _load_payload
 from trader.evaluation.metrics import aggregate_metric_dicts, calculate_metrics
 from trader.evaluation.splits import build_walk_forward_folds
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
 from trader.strategies.registry import REGISTRY
-from trader.strategies.spec import SignalSpec, StrategySpec
+from trader.strategies.spec import ExecConfig, SignalSpec, StrategySpec
 
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -91,6 +92,36 @@ def test_strategy_hash_is_stable() -> None:
         signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
     )
     assert validated.spec_hash() == REGISTRY.validate_spec(renamed).spec_hash()
+
+
+def test_strategy_validation_rejects_non_finite_numeric_values() -> None:
+    with pytest.raises(ValueError, match="ema_cross.signal_buffer_bps must be finite"):
+        REGISTRY.validate_spec(
+            StrategySpec(
+                name="bad_nan_param",
+                signal=SignalSpec(
+                    "ema_cross",
+                    {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": float("nan")},
+                ),
+            )
+        )
+
+    with pytest.raises(ValueError, match="exec_config.initial_cash must be finite"):
+        REGISTRY.validate_spec(
+            StrategySpec(
+                name="bad_nan_cash",
+                exec_config=ExecConfig(initial_cash=float("nan")),
+            )
+        )
+
+
+@pytest.mark.parametrize("constant", ("NaN", "Infinity", "-Infinity"))
+def test_strategy_json_input_rejects_non_standard_numbers(constant: str) -> None:
+    with pytest.raises(SystemExit, match="non-standard JSON numeric value"):
+        _load_payload(
+            None,
+            f'{{"name": "bad", "signal": {{"name": "ema_cross", "params": {{"signal_buffer_bps": {constant}}}}}}}',
+        )
 
 
 def test_invalid_breakout_spec_rejected() -> None:
