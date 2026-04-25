@@ -180,6 +180,14 @@ class EvaluationRunner:
             else RobustnessResult(checks={}, passed=False)
         )
         stage = promotion_stage(aggregate_metrics, robustness.checks)
+        if stage != "exploratory":
+            fold_results = tuple(
+                self._add_cost_scenario_metrics(preview.spec, fold, preview.data_slice.bars, fold_result)
+                for fold, fold_result in zip(preview.folds, fold_results)
+            )
+            aggregate_metrics = self._aggregate_fold_results(fold_results)
+            if stage_a is not None:
+                aggregate_metrics["stage_a_pass"] = 1.0
         holdout_result = (
             self._evaluate_holdout(preview.spec, preview)
             if stage in _HOLDOUT_STAGES and preview.holdout_bars
@@ -342,7 +350,6 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
-        metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
         baselines = evaluate_baselines(
             test_bars,
             spec.exec_config,
@@ -363,6 +370,21 @@ class EvaluationRunner:
         )
         self._fold_result_cache[cache_key] = fold_result
         return fold_result
+
+    def _add_cost_scenario_metrics(
+        self,
+        spec: StrategySpec,
+        fold: Fold,
+        bars: tuple[MarketBar, ...],
+        fold_result: FoldResult,
+    ) -> FoldResult:
+        train_bars = tuple(bars[fold.train_start_idx : fold.train_end_idx + 1])
+        test_bars = tuple(bars[fold.test_start_idx : fold.test_end_idx + 1])
+        regime = self.registry.generate_regime(spec, train_bars, test_bars)
+        sizing_fraction = self.registry.compute_sizing_fraction(spec)
+        metrics = dict(fold_result.metrics)
+        metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
+        return replace(fold_result, metrics=metrics)
 
     def _evaluate_holdout(self, spec: StrategySpec, preview: EvaluationPreview) -> FoldResult:
         train_bars = preview.data_slice.bars
@@ -434,6 +456,9 @@ class EvaluationRunner:
         preview: EvaluationPreview,
     ) -> tuple[tuple[FoldResult, ...], dict[str, float]]:
         fold_results = tuple(self._evaluate_fold(spec, fold, preview.data_slice.bars) for fold in preview.folds)
+        return fold_results, self._aggregate_fold_results(fold_results)
+
+    def _aggregate_fold_results(self, fold_results: Sequence[FoldResult]) -> dict[str, float]:
         aggregate_metrics = aggregate_metric_dicts(
             [fold.metrics | fold.baseline_deltas for fold in fold_results],
             weights=[len(fold.backtest.bars) for fold in fold_results],
@@ -441,7 +466,7 @@ class EvaluationRunner:
         aggregate_metrics["annualized_sharpe"] = annualized_sharpe_for_backtests(
             [fold.backtest for fold in fold_results]
         )
-        return fold_results, aggregate_metrics
+        return aggregate_metrics
 
     def evaluation_key(
         self,

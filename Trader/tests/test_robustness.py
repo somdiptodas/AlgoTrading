@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -395,9 +396,11 @@ def test_evaluate_preview_runs_stage_b_when_stage_a_passes(monkeypatch) -> None:
         "trade_count": 10.0,
         "delta_buy_and_hold_return_pct": 1.0,
     }
+    stage_b_fold = replace(stage_a_fold, metrics=stage_b_metrics)
 
     monkeypatch.setattr(runner, "_evaluate_stage_a", lambda preview: (stage_a_fold, dict(stage_a_fold.metrics)))
-    monkeypatch.setattr(runner, "_evaluate_preview_folds", lambda spec, preview: ((stage_a_fold,), stage_b_metrics))
+    monkeypatch.setattr(runner, "_evaluate_preview_folds", lambda spec, preview: ((stage_b_fold,), stage_b_metrics))
+    monkeypatch.setattr(runner, "_add_cost_scenario_metrics", lambda spec, fold, bars, fold_result: fold_result)
     monkeypatch.setattr(
         "trader.evaluation.runner.assess_robustness",
         lambda **kwargs: RobustnessResult(

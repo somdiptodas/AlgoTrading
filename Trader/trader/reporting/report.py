@@ -238,21 +238,22 @@ def _render_folds(folds: Sequence[FoldResult]) -> str:
         return ""
     sections = ["## Fold Results"]
     for fold in folds:
+        fold_metrics = [
+            f"return={_format_metric_value('return_pct', fold.metrics.get('return_pct', 0.0))}",
+            f"sharpe={_format_metric_value('sharpe_like', fold.metrics.get('sharpe_like', 0.0))}",
+            f"drawdown={_format_metric_value('max_drawdown_pct', fold.metrics.get('max_drawdown_pct', 0.0))}",
+            f"trades={_format_metric_value('trade_count', fold.metrics.get('trade_count', 0.0))}",
+        ]
+        if "cost_drag_return_pct" in fold.metrics:
+            fold_metrics.append(
+                f"cost_drag={_format_metric_value('cost_drag_return_pct', fold.metrics['cost_drag_return_pct'])}"
+            )
         sections.extend(
             [
                 f"### Fold `{fold.fold_id}`",
                 f"- Train window: `{fold.train_start_utc}` to `{fold.train_end_utc}`",
                 f"- Test window: `{fold.test_start_utc}` to `{fold.test_end_utc}`",
-                "- Metrics: "
-                + ", ".join(
-                    [
-                        f"return={_format_metric_value('return_pct', fold.metrics.get('return_pct', 0.0))}",
-                        f"sharpe={_format_metric_value('sharpe_like', fold.metrics.get('sharpe_like', 0.0))}",
-                        f"drawdown={_format_metric_value('max_drawdown_pct', fold.metrics.get('max_drawdown_pct', 0.0))}",
-                        f"trades={_format_metric_value('trade_count', fold.metrics.get('trade_count', 0.0))}",
-                        f"cost_drag={_format_metric_value('cost_drag_return_pct', fold.metrics.get('cost_drag_return_pct', 0.0))}",
-                    ]
-                ),
+                "- Metrics: " + ", ".join(fold_metrics),
                 "- Baselines: "
                 + ", ".join(
                     f"{baseline} return={_format_metric_value('return_pct', values.get('return_pct', 0.0))}"

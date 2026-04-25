@@ -6,15 +6,35 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trader.data.models import MarketBar
+from trader.data.view import DataSlice
 from trader.evaluation.metrics import calculate_metrics
-from trader.evaluation.runner import EvaluationRunner
+from trader.evaluation.robustness import RobustnessResult
+from trader.evaluation.runner import EvaluationPreview, EvaluationRunner, ExperimentResult, FoldResult
+from trader.evaluation.splits import Fold
 from trader.execution.engine import BacktestResult, run_long_only_engine
 from trader.execution.fills import Trade, enter_long, exit_long
+from trader.reporting.report import render_experiment_report
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import ExecConfig, SignalSpec, StrategySpec
 
 
 NEW_YORK = ZoneInfo("America/New_York")
+
+
+class _AlwaysLongRegistry:
+    def generate_regime(
+        self,
+        spec: StrategySpec,
+        train_bars: tuple[MarketBar, ...],
+        test_bars: tuple[MarketBar, ...],
+    ) -> tuple[bool, ...]:
+        return tuple(True for _ in test_bars)
+
+    def compute_sizing_fraction(self, spec: StrategySpec) -> float:
+        return 1.0
+
+    def neighbors(self, spec: StrategySpec) -> tuple[StrategySpec, ...]:
+        return tuple()
 
 
 def _bar(index: int, price: float = 100.0, volume: float = 1_000.0) -> MarketBar:
@@ -40,6 +60,59 @@ def _ohlc_bar(index: int, *, open_price: float, high: float, low: float, close: 
         low=low,
         close=close,
         volume=1_000.0,
+    )
+
+
+def _fold() -> Fold:
+    return Fold(
+        fold_id="fold_1",
+        train_start_idx=0,
+        train_end_idx=1,
+        test_start_idx=2,
+        test_end_idx=3,
+        embargo_bars=0,
+        train_start_utc=_bar(0).timestamp_utc,
+        train_end_utc=_bar(1).timestamp_utc,
+        test_start_utc=_bar(2).timestamp_utc,
+        test_end_utc=_bar(3).timestamp_utc,
+    )
+
+
+def _preview(spec: StrategySpec, bars: tuple[MarketBar, ...], fold: Fold) -> EvaluationPreview:
+    return EvaluationPreview(
+        spec=spec,
+        data_slice=DataSlice(
+            bars=bars,
+            snapshot_id="snapshot",
+            first_timestamp_utc=bars[0].timestamp_utc,
+            last_timestamp_utc=bars[-1].timestamp_utc,
+        ),
+        split_plan_id="split",
+        folds=(fold,),
+        required_history=3,
+        cost_model_id=spec.exec_config.cost_model_id(),
+        evaluation_key="key",
+    )
+
+
+def _fold_result(fold: Fold, metrics: dict[str, float], bars: tuple[MarketBar, ...]) -> FoldResult:
+    return FoldResult(
+        fold_id=fold.fold_id,
+        train_start_utc=fold.train_start_utc,
+        train_end_utc=fold.train_end_utc,
+        test_start_utc=fold.test_start_utc,
+        test_end_utc=fold.test_end_utc,
+        metrics=metrics,
+        baseline_metrics={},
+        baseline_deltas={},
+        warnings=tuple(),
+        backtest=BacktestResult(
+            bars=bars[fold.test_start_idx : fold.test_end_idx + 1],
+            trades=tuple(),
+            equity_curve=(100_000.0, 101_000.0),
+            initial_cash=100_000.0,
+            final_cash=101_000.0,
+        ),
     )
 
 
@@ -246,6 +319,194 @@ def test_cost_scenario_metrics_are_reported() -> None:
     assert scenario_metrics["cost_drag_return_pct"] > 0.0
     assert scenario_metrics["cost_scenario_slippage_plus_2bps_delta_pct"] < 0.0
     assert scenario_metrics["cost_scenario_spread_plus_2bps_delta_pct"] < 0.0
+
+
+def test_evaluate_fold_does_not_run_cost_stress(monkeypatch) -> None:
+    runner = EvaluationRunner.__new__(EvaluationRunner)
+    runner.registry = REGISTRY
+    runner._fold_result_cache = {}
+    bars = tuple(_bar(index, 100.0 + index) for index in range(8))
+    fold = Fold(
+        fold_id="fold_1",
+        train_start_idx=0,
+        train_end_idx=3,
+        test_start_idx=4,
+        test_end_idx=7,
+        embargo_bars=0,
+        train_start_utc=bars[0].timestamp_utc,
+        train_end_utc=bars[3].timestamp_utc,
+        test_start_utc=bars[4].timestamp_utc,
+        test_end_utc=bars[7].timestamp_utc,
+    )
+    spec = REGISTRY.validate_spec(
+        StrategySpec(
+            name="base_only_cost",
+            signal=SignalSpec("ema_cross", {"fast_length": 2, "slow_length": 3, "signal_buffer_bps": 0.0}),
+        )
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "_cost_scenario_metrics",
+        lambda *args, **kwargs: pytest.fail("_evaluate_fold should not run cost stress"),
+    )
+
+    result = runner._evaluate_fold(spec, fold, bars)
+
+    assert "cost_scenario_slippage_plus_2bps_return_pct" not in result.metrics
+    assert "cost_drag_return_pct" not in result.metrics
+
+
+def test_evaluate_preview_adds_cost_stress_after_base_gates_pass(monkeypatch) -> None:
+    runner = EvaluationRunner.__new__(EvaluationRunner)
+    runner.registry = _AlwaysLongRegistry()
+    bars = tuple(_bar(index, 100.0 + index) for index in range(4))
+    fold = _fold()
+    spec = REGISTRY.validate_spec(
+        StrategySpec(
+            name="cost_after_gate",
+            signal=SignalSpec("ema_cross", {"fast_length": 2, "slow_length": 3, "signal_buffer_bps": 0.0}),
+        )
+    )
+    metrics = {
+        "return_pct": 1.0,
+        "annualized_sharpe": 1.0,
+        "sharpe_like": 0.5,
+        "max_drawdown_pct": 1.0,
+        "trade_count": 10.0,
+        "delta_buy_and_hold_return_pct": 0.25,
+    }
+    fold_result = _fold_result(fold, metrics, bars)
+
+    monkeypatch.setattr(runner, "_evaluate_stage_a", lambda preview: (fold_result, {"return_pct": 1.0, "trade_count": 10.0, "max_drawdown_pct": 1.0, "exposure_pct": 10.0}))
+    monkeypatch.setattr(runner, "_evaluate_preview_folds", lambda spec, preview: ((fold_result,), metrics))
+    monkeypatch.setattr(
+        "trader.evaluation.runner.assess_robustness",
+        lambda **kwargs: RobustnessResult(
+            checks={
+                "fold_consistency_pass": True,
+                "regime_pass": True,
+                "neighborhood_pass": True,
+                "drawdown_pass": True,
+            },
+            passed=True,
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_cost_scenario_metrics",
+        lambda *args, **kwargs: {"cost_drag_return_pct": 0.1},
+    )
+
+    result = runner.evaluate_preview(_preview(spec, bars, fold))
+
+    assert result.promotion_stage == "research_frontier"
+    assert result.fold_results[0].metrics["cost_drag_return_pct"] == 0.1
+    assert result.aggregate_metrics["cost_drag_return_pct"] == 0.1
+
+
+def test_evaluate_preview_skips_cost_stress_for_exploratory_results(monkeypatch) -> None:
+    runner = EvaluationRunner.__new__(EvaluationRunner)
+    runner.registry = _AlwaysLongRegistry()
+    bars = tuple(_bar(index, 100.0 + index) for index in range(4))
+    fold = _fold()
+    spec = REGISTRY.validate_spec(
+        StrategySpec(
+            name="cost_skip_exploratory",
+            signal=SignalSpec("ema_cross", {"fast_length": 2, "slow_length": 3, "signal_buffer_bps": 0.0}),
+        )
+    )
+    metrics = {
+        "return_pct": 1.0,
+        "annualized_sharpe": 1.0,
+        "sharpe_like": 0.5,
+        "max_drawdown_pct": 1.0,
+        "trade_count": 10.0,
+        "delta_buy_and_hold_return_pct": 0.25,
+    }
+    fold_result = _fold_result(fold, metrics, bars)
+
+    monkeypatch.setattr(runner, "_evaluate_stage_a", lambda preview: (fold_result, {"return_pct": 1.0, "trade_count": 10.0, "max_drawdown_pct": 1.0, "exposure_pct": 10.0}))
+    monkeypatch.setattr(runner, "_evaluate_preview_folds", lambda spec, preview: ((fold_result,), metrics))
+    monkeypatch.setattr("trader.evaluation.runner.promotion_stage", lambda aggregate, checks: "exploratory")
+    monkeypatch.setattr(
+        runner,
+        "_cost_scenario_metrics",
+        lambda *args, **kwargs: pytest.fail("exploratory results should skip cost stress"),
+    )
+
+    result = runner.evaluate_preview(_preview(spec, bars, fold))
+
+    assert result.promotion_stage == "exploratory"
+    assert "cost_drag_return_pct" not in result.aggregate_metrics
+
+
+def test_evaluate_preview_skips_cost_stress_when_robustness_is_disabled(monkeypatch) -> None:
+    runner = EvaluationRunner.__new__(EvaluationRunner)
+    bars = tuple(_bar(index, 100.0 + index) for index in range(4))
+    fold = _fold()
+    spec = REGISTRY.validate_spec(
+        StrategySpec(
+            name="cost_skip_no_robustness",
+            signal=SignalSpec("ema_cross", {"fast_length": 2, "slow_length": 3, "signal_buffer_bps": 0.0}),
+        )
+    )
+    metrics = {
+        "return_pct": 1.0,
+        "annualized_sharpe": 1.0,
+        "sharpe_like": 0.5,
+        "max_drawdown_pct": 1.0,
+        "trade_count": 10.0,
+        "delta_buy_and_hold_return_pct": 1.0,
+    }
+    fold_result = _fold_result(fold, metrics, bars)
+
+    monkeypatch.setattr(runner, "_evaluate_stage_a", lambda preview: pytest.fail("Stage A should be skipped"))
+    monkeypatch.setattr(runner, "_evaluate_preview_folds", lambda spec, preview: ((fold_result,), metrics))
+    monkeypatch.setattr(
+        runner,
+        "_cost_scenario_metrics",
+        lambda *args, **kwargs: pytest.fail("include_robustness=False should skip cost stress"),
+    )
+
+    result = runner.evaluate_preview(_preview(spec, bars, fold), include_robustness=False)
+
+    assert result.promotion_stage == "exploratory"
+    assert "cost_drag_return_pct" not in result.aggregate_metrics
+
+
+def test_report_omits_fold_cost_drag_when_cost_stress_is_skipped() -> None:
+    bars = tuple(_bar(index, 100.0 + index) for index in range(4))
+    fold = _fold()
+    spec = REGISTRY.validate_spec(
+        StrategySpec(
+            name="cost_report",
+            signal=SignalSpec("ema_cross", {"fast_length": 2, "slow_length": 3, "signal_buffer_bps": 0.0}),
+        )
+    )
+    metrics = {
+        "return_pct": 1.0,
+        "sharpe_like": 0.5,
+        "max_drawdown_pct": 1.0,
+        "trade_count": 10.0,
+    }
+    result = ExperimentResult(
+        experiment_id="cost_report",
+        status="completed",
+        spec=spec,
+        spec_hash=spec.spec_hash(),
+        data_snapshot_id="snapshot",
+        split_plan_id="split",
+        cost_model_id=spec.exec_config.cost_model_id(),
+        aggregate_metrics=metrics,
+        fold_results=(_fold_result(fold, metrics, bars),),
+        robustness_checks={},
+        promotion_stage="exploratory",
+    )
+
+    report = render_experiment_report(result)
+
+    assert "cost_drag=" not in report
 
 
 def test_registry_rejects_invalid_cost_config_values() -> None:
