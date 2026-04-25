@@ -2,7 +2,6 @@ from __future__ import annotations
 
 
 MIN_PROMOTION_TRADE_COUNT = 10.0
-MIN_CANDIDATE_BUY_HOLD_EDGE_PCT = 0.5
 _REQUIRED_ROBUSTNESS_CHECKS = (
     "fold_consistency_pass",
     "regime_pass",
@@ -23,8 +22,8 @@ def promotion_stage(
     risk_metric = aggregate_metrics.get("annualized_sharpe", aggregate_metrics.get("sharpe_like", 0.0))
     positive_risk_adjusted_return = risk_metric > 0.0
     enough_trades = aggregate_metrics.get("trade_count", 0.0) >= MIN_PROMOTION_TRADE_COUNT
-    buy_hold_edge_pct = aggregate_metrics.get("delta_buy_and_hold_return_pct", -999.0)
-    beats_relevant_benchmark = buy_hold_edge_pct > 0.0
+    exposure_adjusted_edge_pct = aggregate_metrics.get("delta_exposure_adjusted_buy_and_hold_pct", -999.0)
+    beats_relevant_benchmark = exposure_adjusted_edge_pct > 0.0
     if not (
         robust
         and positive_return
@@ -34,7 +33,4 @@ def promotion_stage(
     ):
         return "exploratory"
 
-    beats_buy_hold = buy_hold_edge_pct > MIN_CANDIDATE_BUY_HOLD_EDGE_PCT
-    if beats_buy_hold:
-        return "candidate"
-    return "research_frontier"
+    return "candidate"

@@ -375,6 +375,7 @@ def test_evaluate_preview_adds_cost_stress_after_base_gates_pass(monkeypatch) ->
         "max_drawdown_pct": 1.0,
         "trade_count": 10.0,
         "delta_buy_and_hold_return_pct": 0.25,
+        "delta_exposure_adjusted_buy_and_hold_pct": 0.25,
     }
     fold_result = _fold_result(fold, metrics, bars)
 
@@ -400,7 +401,7 @@ def test_evaluate_preview_adds_cost_stress_after_base_gates_pass(monkeypatch) ->
 
     result = runner.evaluate_preview(_preview(spec, bars, fold))
 
-    assert result.promotion_stage == "research_frontier"
+    assert result.promotion_stage == "candidate"
     assert result.fold_results[0].metrics["cost_drag_return_pct"] == 0.1
     assert result.aggregate_metrics["cost_drag_return_pct"] == 0.1
 
@@ -423,6 +424,7 @@ def test_evaluate_preview_skips_cost_stress_for_exploratory_results(monkeypatch)
         "max_drawdown_pct": 1.0,
         "trade_count": 10.0,
         "delta_buy_and_hold_return_pct": 0.25,
+        "delta_exposure_adjusted_buy_and_hold_pct": 0.25,
     }
     fold_result = _fold_result(fold, metrics, bars)
 
@@ -458,6 +460,7 @@ def test_evaluate_preview_skips_cost_stress_when_robustness_is_disabled(monkeypa
         "max_drawdown_pct": 1.0,
         "trade_count": 10.0,
         "delta_buy_and_hold_return_pct": 1.0,
+        "delta_exposure_adjusted_buy_and_hold_pct": 1.0,
     }
     fold_result = _fold_result(fold, metrics, bars)
 

@@ -151,6 +151,10 @@ def baseline_deltas(metrics: dict[str, float], baselines: dict[str, dict[str, fl
             metrics["annualized_sharpe"] - baseline_metrics["annualized_sharpe"]
         )
         deltas[f"delta_{baseline_name}_sharpe_like"] = metrics["sharpe_like"] - baseline_metrics["sharpe_like"]
+    if "buy_and_hold" in baselines:
+        deltas["delta_exposure_adjusted_buy_and_hold_pct"] = metrics["return_pct"] - (
+            (metrics.get("exposure_pct", 0.0) / 100.0) * baselines["buy_and_hold"]["return_pct"]
+        )
     return deltas
 
 

@@ -81,6 +81,7 @@ def _sample_result() -> ExperimentResult:
         baseline_deltas={
             "delta_always_flat_return_pct": 0.015,
             "delta_buy_and_hold_return_pct": 0.005,
+            "delta_exposure_adjusted_buy_and_hold_pct": 0.0084,
             "delta_always_flat_sharpe_like": 1.2,
             "delta_buy_and_hold_sharpe_like": 0.2,
         },
@@ -105,6 +106,7 @@ def _sample_result() -> ExperimentResult:
             "max_drawdown_pct": 0.0,
             "trade_count": 1.0,
             "delta_buy_and_hold_return_pct": 0.005,
+            "delta_exposure_adjusted_buy_and_hold_pct": 0.0084,
         },
         fold_results=(fold,),
         robustness_checks={"fold_consistency_pass": True, "neighborhood_pass": True},
@@ -128,6 +130,10 @@ def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:
     assert fetched is not None
     assert fetched.spec_hash == result.spec_hash
     assert fetched.to_result().aggregate_metrics["sharpe_like"] == result.aggregate_metrics["sharpe_like"]
+    assert (
+        fetched.to_result().aggregate_metrics["delta_exposure_adjusted_buy_and_hold_pct"]
+        == result.aggregate_metrics["delta_exposure_adjusted_buy_and_hold_pct"]
+    )
     assert len(ledger.list_completed()) == 1
     assert len(ledger.top_experiments()) == 1
     for path in artifact_paths.values():
@@ -357,6 +363,12 @@ def test_report_renders_holdout_warnings() -> None:
 
     assert "## Holdout" in report
     assert "Warnings: data_quality.missing_bars: gap" in report
+
+
+def test_report_renders_exposure_adjusted_buy_hold_delta() -> None:
+    report = render_experiment_report(_sample_result())
+
+    assert "Return vs exposure-adjusted buy and hold" in report
 
 
 def test_top_experiments_ranks_from_scalar_columns_before_deserializing_winners(

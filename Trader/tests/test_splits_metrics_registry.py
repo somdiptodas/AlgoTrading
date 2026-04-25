@@ -93,6 +93,7 @@ def test_baseline_deltas_include_annualized_sharpe() -> None:
             "return_pct": 3.0,
             "annualized_sharpe": 1.5,
             "sharpe_like": 0.6,
+            "exposure_pct": 25.0,
         },
         {
             "buy_and_hold": {
@@ -104,6 +105,7 @@ def test_baseline_deltas_include_annualized_sharpe() -> None:
     )
 
     assert deltas["delta_buy_and_hold_return_pct"] == 2.0
+    assert deltas["delta_exposure_adjusted_buy_and_hold_pct"] == pytest.approx(2.75)
     assert deltas["delta_buy_and_hold_annualized_sharpe"] == 1.25
     assert deltas["delta_buy_and_hold_sharpe_like"] == pytest.approx(0.4)
 

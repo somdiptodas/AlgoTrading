@@ -105,6 +105,7 @@ def test_holdout_runs_only_for_promoted_results(monkeypatch) -> None:
         "sharpe_like": 0.5,
         "trade_count": 10.0,
         "delta_buy_and_hold_return_pct": 1.0,
+        "delta_exposure_adjusted_buy_and_hold_pct": 1.0,
     }
 
     monkeypatch.setattr(runner, "_evaluate_preview_folds", lambda spec, preview: (tuple(), metrics))

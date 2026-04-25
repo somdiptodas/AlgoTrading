@@ -395,6 +395,7 @@ def test_evaluate_preview_runs_stage_b_when_stage_a_passes(monkeypatch) -> None:
         "max_drawdown_pct": 1.0,
         "trade_count": 10.0,
         "delta_buy_and_hold_return_pct": 1.0,
+        "delta_exposure_adjusted_buy_and_hold_pct": 1.0,
     }
     stage_b_fold = replace(stage_a_fold, metrics=stage_b_metrics)
 
@@ -451,6 +452,7 @@ def test_evaluate_preview_skips_stage_a_when_robustness_is_disabled(monkeypatch)
         "max_drawdown_pct": 1.0,
         "trade_count": 10.0,
         "delta_buy_and_hold_return_pct": 1.0,
+        "delta_exposure_adjusted_buy_and_hold_pct": 1.0,
     }
 
     monkeypatch.setattr(runner, "_evaluate_stage_a", lambda preview: pytest.fail("Stage A should be skipped"))

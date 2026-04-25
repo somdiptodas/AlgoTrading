@@ -53,8 +53,12 @@ class HeuristicCritic:
             notes.append("Aggregate OOS return is non-positive.")
             next_focus.append("Shift to alternate family or shorter lookback neighborhood.")
             planning_penalties["non_positive_return"] = 12.0
-        if result.aggregate_metrics.get("delta_buy_and_hold_return_pct", -999.0) <= 0:
-            notes.append("Strategy does not beat buy-and-hold on average OOS return.")
+        benchmark_edge = result.aggregate_metrics.get(
+            "delta_exposure_adjusted_buy_and_hold_pct",
+            result.aggregate_metrics.get("delta_buy_and_hold_return_pct", -999.0),
+        )
+        if benchmark_edge <= 0:
+            notes.append("Strategy does not beat the relevant buy-and-hold benchmark on average OOS return.")
             next_focus.append("Search for lower-drawdown variants before promoting.")
             planning_penalties["benchmark_failure"] = 10.0
         if not result.robustness_checks.get("neighborhood_pass", False):
