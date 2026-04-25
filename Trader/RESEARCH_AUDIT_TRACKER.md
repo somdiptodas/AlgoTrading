@@ -255,10 +255,12 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added an optional paper-trading live-data integrity gate with stale quote/bar checks, future-data rejection, missing-minute/out-of-order bar checks, and a configurable NY market calendar with closed dates and early-close overrides. Gateway checks run after idempotent replay and before risk/broker submission, and rejects write `data_integrity_blocked` audit events.
   - Verification: `.venv/bin/pytest tests/test_paper_data_integrity.py tests/test_paper_risk.py tests/test_paper_trading.py -q` passes 29 tests; `.venv/bin/pytest -q` passes 178 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Add strategy decay monitoring.
+- [x] Add strategy decay monitoring.
   - Re-evaluate promoted specs as new data arrives.
   - Link evaluations across changing data snapshots.
   - Report rolling degradation and promotion/demotion status.
+  - Completed 2026-04-25: added a strategy decay monitor that re-evaluates promoted specs against the current data snapshot when the current evaluation key is missing, records new checks as `decay_monitor` entries linked to the source experiment, and reports source/latest snapshot lineage, promotion/demotion status, metric deltas, rolling latest-step deltas, and consecutive degradation count. Added `eval --decay-promoted` for rechecks and `ledger decay` for report-only inspection.
+  - Verification: `.venv/bin/pytest tests/test_decay_monitor.py tests/test_ledger.py tests/test_promotion.py tests/test_research_queue.py::test_runner_evaluation_key_for_spec_matches_preview_key -q` passes 37 tests; `.venv/bin/pytest -q` passes 183 tests. Verification subagent re-review reported no blockers.
 
 ## Suggested Execution Order
 

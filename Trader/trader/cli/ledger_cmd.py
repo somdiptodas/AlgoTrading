@@ -5,13 +5,15 @@ import argparse
 from trader.config import load_settings
 from trader.ledger.entry import json_dumps
 from trader.ledger.store import LedgerStore
+from trader.research.decay import build_decay_report, decay_report_to_payload
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Inspect research ledger summaries")
-    parser.add_argument("command", nargs="?", default="summary", choices=("summary",))
+    parser.add_argument("command", nargs="?", default="summary", choices=("summary", "decay"))
     parser.add_argument("--ledger")
     parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--current-snapshot-id")
     return parser
 
 
@@ -31,6 +33,15 @@ def main(argv: list[str] | None = None) -> None:
             "by_status": stats["by_status"],
             "recent_completed": [_summary_item(entry) for entry in recent],
             "top_experiments": [_summary_item(entry) for entry in top],
+        }
+        print(json_dumps(payload, pretty=True))
+        return
+    if args.command == "decay":
+        entries = ledger.list_completed(limit=10_000)
+        report = build_decay_report(entries, current_snapshot_id=args.current_snapshot_id, limit=args.limit)
+        payload = {
+            "ledger_path": str(ledger.database_path.resolve()),
+            "decay_report": decay_report_to_payload(report),
         }
         print(json_dumps(payload, pretty=True))
         return
