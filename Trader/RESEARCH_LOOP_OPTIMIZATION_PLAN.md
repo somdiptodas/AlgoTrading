@@ -271,7 +271,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: baseline deltas now include exposure-adjusted buy-and-hold edge, reports label it, the critic uses it when present, and promotion gates candidates on positive exposure-adjusted edge instead of raw buy-and-hold delta.
   - Verification: focused promotion/metric/ledger/runner tests passed (`.venv/bin/pytest -q tests/test_promotion.py tests/test_splits_metrics_registry.py tests/test_research_queue.py tests/test_ledger.py tests/test_costs.py tests/test_robustness.py tests/test_holdout.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
-- [ ] **Fix vwap_deviation churn** (G10). Add `min_bars_between_entries` (cooldown) and `max_entries_per_session` to the signal params; default cooldown 30 bars, max 4 entries/day.
+- [x] **Fix vwap_deviation churn** (G10). Add `min_bars_between_entries` (cooldown) and `max_entries_per_session` to the signal params; default cooldown 30 bars, max 4 entries/day.
+  - Completed: 2026-04-25
+  - Implementation: `vwap_deviation` now normalizes and emits explicit churn-control params, enforces cooldown after exits, caps signal entries per session, resets state on session changes, and preserves cooldown/cap through planner grids and neighbors.
+  - Verification: focused VWAP/planner/leakage tests passed (`.venv/bin/pytest -q tests/test_vwap_deviation.py tests/test_planner.py tests/test_leakage.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
 - [ ] **Add per-phase timing JSON** to loop output (rev 1 P0 carryover): planning, key compute, preview, queue scoring, stage A, stage B, robustness neighbors, artifact write, ledger write.
 
 ### P1 — make the loop a real ensemble factory
