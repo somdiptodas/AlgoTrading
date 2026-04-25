@@ -216,11 +216,13 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added a registered `vwap_deviation` signal family that enters when close is below VWAP by a configured threshold, exits on VWAP reversion or `max_hold_bars` timeout, and relies on existing stop-loss/session-close execution controls for stop and close exits. Stored VWAP now flows into `MarketBar`, data hashes, and ledger/artifact payload round trips; the deterministic loop can plan the new family.
   - Verification: `.venv/bin/pytest tests/test_vwap_deviation.py tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_leakage.py tests/test_research_queue.py -q` passes 44 tests; `.venv/bin/pytest -q` passes 122 tests. Verification subagent reported no blockers.
 
-- [ ] Add volatility and volume regime filters.
+- [x] Add volatility and volume regime filters.
   - Intraday realized volatility percentile.
   - Prior-day range.
   - Volume percentile or relative volume.
   - Trend day vs mean-reversion day classification.
+  - Completed 2026-04-25: added real filter-mask semantics to `StrategyRegistry`, including required-history contribution and logical-AND application on generated regimes. Added intraday volatility percentile, prior-day range, relative-volume, and online day-type filters, plus single-filter planner variants that cover all filter families within the default loop budget.
+  - Verification: `.venv/bin/pytest tests/test_regime_filters.py tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_research_queue.py -q` passes 45 tests; `.venv/bin/pytest -q` passes 139 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Add ensemble or confirmation specs only after metrics and validation are fixed.
   - Example: RSI reversion gated by volatility regime or VWAP distance.

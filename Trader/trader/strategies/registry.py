@@ -5,7 +5,7 @@ from dataclasses import replace
 from typing import Callable
 
 from trader.data.models import MarketBar
-from trader.strategies.filters import session
+from trader.strategies.filters import regime, session
 from trader.strategies.signals import breakout, ema_cross, rsi_reversion, vwap_deviation
 from trader.strategies.sizers import fixed_fraction, full_notional
 from trader.strategies.spec import FilterSpec, SignalSpec, StrategySpec
@@ -56,7 +56,33 @@ class StrategyRegistry:
                 "compute_fraction": fixed_fraction.compute_fraction,
             },
         }
-        self.filter_handlers = {"session": {"normalize_params": session.normalize_params}}
+        self.filter_handlers = {
+            "session": {
+                "normalize_params": session.normalize_params,
+                "required_history": lambda params: 0,
+                "generate_mask": session.generate_mask,
+            },
+            "intraday_volatility": {
+                "normalize_params": regime.normalize_intraday_volatility_params,
+                "required_history": lambda params: int(params["lookback_bars"]) + int(params["percentile_window"]),
+                "generate_mask": regime.generate_intraday_volatility_mask,
+            },
+            "prior_day_range": {
+                "normalize_params": regime.normalize_prior_day_range_params,
+                "required_history": lambda params: 390,
+                "generate_mask": regime.generate_prior_day_range_mask,
+            },
+            "relative_volume": {
+                "normalize_params": regime.normalize_relative_volume_params,
+                "required_history": lambda params: int(params["lookback_bars"]),
+                "generate_mask": regime.generate_relative_volume_mask,
+            },
+            "day_type": {
+                "normalize_params": regime.normalize_day_type_params,
+                "required_history": lambda params: int(params["min_bars"]),
+                "generate_mask": regime.generate_day_type_mask,
+            },
+        }
 
     def validate_spec(self, spec: StrategySpec) -> StrategySpec:
         if spec.instrument != "SPY":
@@ -142,12 +168,21 @@ class StrategyRegistry:
 
     def required_history(self, spec: StrategySpec) -> int:
         validated = self.validate_spec(spec)
-        return int(self.signal_handlers[validated.signal.name]["required_history"](validated.signal.params))
+        signal_history = int(self.signal_handlers[validated.signal.name]["required_history"](validated.signal.params))
+        filter_history = [
+            int(self.filter_handlers[filter_spec.name]["required_history"](filter_spec.params))
+            for filter_spec in validated.filters
+        ]
+        return max((signal_history, *filter_history))
 
     def generate_regime(self, spec: StrategySpec, history_bars: tuple[MarketBar, ...], test_bars: tuple[MarketBar, ...]) -> list[bool]:
         validated = self.validate_spec(spec)
         handler = self.signal_handlers[validated.signal.name]["generate_regime"]
-        return handler(history_bars, test_bars, validated.signal.params)
+        signal_regime = handler(history_bars, test_bars, validated.signal.params)
+        for filter_spec in validated.filters:
+            mask = self.filter_handlers[filter_spec.name]["generate_mask"](history_bars, test_bars, filter_spec.params)
+            signal_regime = [regime_on and mask_on for regime_on, mask_on in zip(signal_regime, mask)]
+        return signal_regime
 
     def compute_sizing_fraction(self, spec: StrategySpec) -> float:
         validated = self.validate_spec(spec)

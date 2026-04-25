@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from trader.strategies.registry import StrategyRegistry
-from trader.strategies.spec import ExecConfig, SignalSpec, SizingSpec, StrategySpec
+from trader.strategies.spec import ExecConfig, FilterSpec, SignalSpec, SizingSpec, StrategySpec
 
 
 _SIZING_GRID = (
@@ -18,6 +18,25 @@ _EXECUTION_GRID = (
     ExecConfig(entry_session_window="last_30m"),
     ExecConfig(entry_session_window="avoid_midday"),
     ExecConfig(no_new_entry_minutes_before_close=30),
+)
+_FILTER_GRID = (
+    (),
+    (FilterSpec("intraday_volatility", {"lookback_bars": 10, "percentile_window": 60, "min_percentile": 70.0}),),
+    (
+        FilterSpec(
+            "intraday_volatility",
+            {"lookback_bars": 10, "percentile_window": 60, "min_percentile": 0.0, "max_percentile": 30.0},
+        ),
+    ),
+    (FilterSpec("prior_day_range", {"min_range_bps": 100.0}),),
+    (FilterSpec("relative_volume", {"lookback_bars": 20, "min_ratio": 1.25}),),
+    (FilterSpec("day_type", {"mode": "trend", "min_bars": 30, "trend_bps": 50.0, "min_efficiency": 0.60}),),
+    (
+        FilterSpec(
+            "day_type",
+            {"mode": "mean_reversion", "min_bars": 30, "trend_bps": 50.0, "max_efficiency": 0.35},
+        ),
+    ),
 )
 
 
@@ -44,21 +63,21 @@ class DeterministicPlanner:
         for signal_name in allowed:
             family_candidates: list[PlannedSpec] = []
             for params in self.registry.parameter_grid(signal_name):
-                for sizing in _SIZING_GRID:
-                    for exec_config in _EXECUTION_GRID:
-                        family_candidates.append(
-                            PlannedSpec(
-                                spec=self._rename(
-                                    StrategySpec(
-                                        name=f"{signal_name}_grid",
-                                        signal=SignalSpec(signal_name, params),
-                                        sizing=sizing,
-                                        exec_config=exec_config,
-                                    )
-                                ),
-                                generator_kind="grid",
-                            )
+                for sizing, exec_config, filters in _parameter_combinations():
+                    family_candidates.append(
+                        PlannedSpec(
+                            spec=self._rename(
+                                StrategySpec(
+                                    name=f"{signal_name}_grid",
+                                    signal=SignalSpec(signal_name, params),
+                                    sizing=sizing,
+                                    filters=filters,
+                                    exec_config=exec_config,
+                                )
+                            ),
+                            generator_kind="grid",
                         )
+                    )
             grid_buckets.append(family_candidates)
         frontier_buckets = {signal_name: [] for signal_name in allowed}
         for parent_experiment_id, parent_spec in sorted(frontier_specs, key=lambda item: item[0]):
@@ -98,3 +117,15 @@ class DeterministicPlanner:
                 "name": f"{spec.signal.name}_{spec.spec_hash()[:8]}",
             }
         )
+
+
+def _parameter_combinations() -> tuple[tuple[SizingSpec, ExecConfig, tuple[FilterSpec, ...]], ...]:
+    combination_count = len(_SIZING_GRID) * len(_EXECUTION_GRID) * len(_FILTER_GRID)
+    return tuple(
+        (
+            _SIZING_GRID[index % len(_SIZING_GRID)],
+            _EXECUTION_GRID[index % len(_EXECUTION_GRID)],
+            _FILTER_GRID[index % len(_FILTER_GRID)],
+        )
+        for index in range(combination_count)
+    )
