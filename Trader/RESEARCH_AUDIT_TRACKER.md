@@ -224,8 +224,10 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added real filter-mask semantics to `StrategyRegistry`, including required-history contribution and logical-AND application on generated regimes. Added intraday volatility percentile, prior-day range, relative-volume, and online day-type filters, plus single-filter planner variants that cover all filter families within the default loop budget.
   - Verification: `.venv/bin/pytest tests/test_regime_filters.py tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_research_queue.py -q` passes 45 tests; `.venv/bin/pytest -q` passes 139 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Add ensemble or confirmation specs only after metrics and validation are fixed.
+- [x] Add ensemble or confirmation specs only after metrics and validation are fixed.
   - Example: RSI reversion gated by volatility regime or VWAP distance.
+  - Completed 2026-04-25: added confirmation-spec support without changing execution or `StrategySpec` schema. Confirmations use existing filter-AND semantics, add a `vwap_distance` confirmation filter, and the planner now emits a small auditable `confirmation_grid` bucket for RSI plus volatility/VWAP-distance confirmations and VWAP-deviation plus relative-volume confirmation.
+  - Verification: `.venv/bin/pytest tests/test_confirmation_filters.py tests/test_planner.py tests/test_regime_filters.py tests/test_splits_metrics_registry.py tests/test_research_queue.py -q` passes 55 tests; `.venv/bin/pytest -q` passes 149 tests. Verification subagent reported no blockers.
 
 ## P4 - Future Trading Readiness
 

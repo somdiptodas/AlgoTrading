@@ -161,6 +161,45 @@ def generate_day_type_mask(
     return output
 
 
+def normalize_vwap_distance_params(params: dict[str, object]) -> dict[str, float | str]:
+    merged = {"side": "below", "min_deviation_bps": 0.0, "max_deviation_bps": 100_000.0, **params}
+    side = str(merged["side"])
+    min_deviation_bps = float(merged["min_deviation_bps"])
+    max_deviation_bps = float(merged["max_deviation_bps"])
+    if side not in {"below", "above"}:
+        raise ValueError("vwap_distance.side must be below or above")
+    if min_deviation_bps < 0:
+        raise ValueError("vwap_distance.min_deviation_bps must be >= 0")
+    if max_deviation_bps < min_deviation_bps:
+        raise ValueError("vwap_distance.max_deviation_bps must be >= min_deviation_bps")
+    return {
+        "side": side,
+        "min_deviation_bps": min_deviation_bps,
+        "max_deviation_bps": max_deviation_bps,
+    }
+
+
+def generate_vwap_distance_mask(
+    history_bars: Sequence[MarketBar],
+    test_bars: Sequence[MarketBar],
+    params: dict[str, float | str],
+) -> list[bool]:
+    output: list[bool] = []
+    side = str(params["side"])
+    min_deviation_bps = float(params["min_deviation_bps"])
+    max_deviation_bps = float(params["max_deviation_bps"])
+    for bar in test_bars:
+        if bar.vwap is None or bar.vwap <= 0:
+            output.append(False)
+            continue
+        if side == "below":
+            deviation_bps = ((bar.vwap - bar.close) / bar.vwap) * 10_000.0
+        else:
+            deviation_bps = ((bar.close - bar.vwap) / bar.vwap) * 10_000.0
+        output.append(min_deviation_bps <= deviation_bps <= max_deviation_bps)
+    return output
+
+
 def _intraday_realized_volatility_bps(bars: Sequence[MarketBar], lookback_bars: int) -> list[float | None]:
     returns: list[float | None] = [None]
     for previous, current in zip(bars, bars[1:]):

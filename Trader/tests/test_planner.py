@@ -171,3 +171,26 @@ def test_planner_reserves_frontier_slot_per_enabled_family() -> None:
         ("grid", "breakout"),
         ("grid", "rsi_reversion"),
     }
+
+
+def test_planner_emits_curated_confirmation_specs_before_default_budget_truncation() -> None:
+    planner = DeterministicPlanner(REGISTRY)
+
+    planned = planner.plan(
+        batch_size=12,
+        allowed_signal_families=("rsi_reversion", "vwap_deviation"),
+    )
+    confirmation_specs = [item.spec for item in planned if item.generator_kind == "confirmation_grid"]
+
+    assert confirmation_specs
+    assert any(item.generator_kind == "grid" for item in planned)
+    assert all(REGISTRY.validate_spec(spec) for spec in confirmation_specs)
+    assert {
+        (spec.signal.name, spec.filters[0].name)
+        for spec in confirmation_specs
+    } >= {
+        ("rsi_reversion", "intraday_volatility"),
+        ("rsi_reversion", "vwap_distance"),
+        ("vwap_deviation", "relative_volume"),
+    }
+    assert all("confirmation" in spec.tags for spec in confirmation_specs)

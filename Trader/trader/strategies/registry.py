@@ -82,6 +82,11 @@ class StrategyRegistry:
                 "required_history": lambda params: int(params["min_bars"]),
                 "generate_mask": regime.generate_day_type_mask,
             },
+            "vwap_distance": {
+                "normalize_params": regime.normalize_vwap_distance_params,
+                "required_history": lambda params: 0,
+                "generate_mask": regime.generate_vwap_distance_mask,
+            },
         }
 
     def validate_spec(self, spec: StrategySpec) -> StrategySpec:

@@ -38,6 +38,21 @@ _FILTER_GRID = (
         ),
     ),
 )
+_CONFIRMATION_FILTER_GRID = {
+    "rsi_reversion": (
+        (FilterSpec("intraday_volatility", {"lookback_bars": 10, "percentile_window": 60, "min_percentile": 70.0}),),
+        (
+            FilterSpec(
+                "intraday_volatility",
+                {"lookback_bars": 10, "percentile_window": 60, "min_percentile": 0.0, "max_percentile": 30.0},
+            ),
+        ),
+        (FilterSpec("vwap_distance", {"side": "below", "min_deviation_bps": 25.0}),),
+    ),
+    "vwap_deviation": (
+        (FilterSpec("relative_volume", {"lookback_bars": 20, "min_ratio": 1.25}),),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -59,6 +74,30 @@ class DeterministicPlanner:
         allowed_signal_families: Sequence[str] | None = None,
     ) -> tuple[PlannedSpec, ...]:
         allowed = tuple(allowed_signal_families or ("ema_cross", "breakout"))
+        confirmation_buckets: list[list[PlannedSpec]] = []
+        for signal_name in allowed:
+            filters_for_signal = _CONFIRMATION_FILTER_GRID.get(signal_name, ())
+            if not filters_for_signal:
+                continue
+            confirmation_candidates: list[PlannedSpec] = []
+            for params in self.registry.parameter_grid(signal_name):
+                for filters in filters_for_signal:
+                    confirmation_candidates.append(
+                        PlannedSpec(
+                            spec=self._rename(
+                                StrategySpec(
+                                    name=f"{signal_name}_confirmation",
+                                    signal=SignalSpec(signal_name, params),
+                                    sizing=_SIZING_GRID[1],
+                                    filters=filters,
+                                    exec_config=ExecConfig(),
+                                    tags=("confirmation",),
+                                )
+                            ),
+                            generator_kind="confirmation_grid",
+                        )
+                    )
+            confirmation_buckets.append(confirmation_candidates)
         grid_buckets: list[list[PlannedSpec]] = []
         for signal_name in allowed:
             family_candidates: list[PlannedSpec] = []
@@ -91,7 +130,7 @@ class DeterministicPlanner:
                         parent_experiment_ids=(parent_experiment_id,),
                     )
                 )
-        buckets = [bucket for signal_name in allowed if (bucket := frontier_buckets[signal_name])] + grid_buckets
+        buckets = [bucket for signal_name in allowed if (bucket := frontier_buckets[signal_name])] + grid_buckets + confirmation_buckets
         indexes = [0 for _ in buckets]
         deduped: list[PlannedSpec] = []
         seen_hashes: set[str] = set()
