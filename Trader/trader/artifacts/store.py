@@ -18,6 +18,7 @@ class ArtifactStore:
         *,
         report_markdown: str | None = None,
         critique: dict[str, object] | None = None,
+        generator_kind: str | None = None,
     ) -> dict[str, str]:
         experiment_dir = self.artifacts_dir / result.experiment_id
         experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -54,7 +55,7 @@ class ArtifactStore:
             "cost_model_id": result.cost_model_id,
             "promotion_stage": result.promotion_stage,
             "aggregate_metrics": dict(result.aggregate_metrics),
-            "generator_kind": None,
+            "generator_kind": generator_kind,
             "artifact_paths": paths,
             "critique": critique,
         }
@@ -69,8 +70,14 @@ class ArtifactStore:
         *,
         report_markdown: str | None = None,
         critique: dict[str, object] | None = None,
+        generator_kind: str | None = None,
     ) -> dict[str, str]:
-        return self.write_experiment(result, report_markdown=report_markdown, critique=critique)
+        return self.write_experiment(
+            result,
+            report_markdown=report_markdown,
+            critique=critique,
+            generator_kind=generator_kind,
+        )
 
     def _trades_payload(self, result: ExperimentResult) -> dict[str, object]:
         return {

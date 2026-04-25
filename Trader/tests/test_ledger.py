@@ -592,6 +592,16 @@ def test_persisted_ledger_and_artifacts_use_standard_json_for_non_finite_metrics
     assert "profit_factor" not in fetched.aggregate_metrics
 
 
+def test_artifact_manifest_records_generator_kind(tmp_path: Path) -> None:
+    result = _sample_result()
+    artifacts = ArtifactStore(tmp_path / "artifacts", tmp_path / "reports")
+
+    artifact_paths = artifacts.write_experiment(result, generator_kind="frontier_neighborhood")
+
+    manifest = json.loads(Path(artifact_paths["manifest"]).read_text(encoding="utf-8"))
+    assert manifest["generator_kind"] == "frontier_neighborhood"
+
+
 def _result_with_non_finite_metrics() -> ExperimentResult:
     result = _sample_result()
     fold = result.fold_results[0]

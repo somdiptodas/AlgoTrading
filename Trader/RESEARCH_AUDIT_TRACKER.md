@@ -183,8 +183,10 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: planner-generated specs no longer include the redundant regular-session filter, and registry validation strips normalized `session=regular` filters while still rejecting unsupported session filters. Strategy payload/hash canonicalization now treats an explicit regular-session filter as equivalent to the default `ExecConfig.regular_session_only=True` execution behavior.
   - Verification: `.venv/bin/pytest tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_research_queue.py -q` passes 26 tests; `.venv/bin/pytest -q` passes 94 tests. Verification subagent reported no blockers.
 
-- [ ] Pass `generator_kind` into artifact manifests.
+- [x] Pass `generator_kind` into artifact manifests.
   - Current ledger rows know generator kind, but artifact manifests write `null`.
+  - Completed 2026-04-25: artifact manifest writes now accept an optional `generator_kind`, and the research loop passes the same candidate generator kind to artifacts that it records in the ledger. Direct artifact callers remain backward-compatible and still default to `null` when no generator kind is known.
+  - Verification: `.venv/bin/pytest tests/test_ledger.py -q` passes 15 tests; `.venv/bin/pytest -q` passes 95 tests. Verification subagent reported no blockers.
 
 ## P3 - Search Space Expansion
 

@@ -152,7 +152,12 @@ def main(argv: list[str] | None = None) -> None:
         result = runner.evaluate_preview(candidate.preview, include_robustness=True)
         critique = critic.critique(result)
         report_markdown = render_experiment_report(result, critique=critique.to_payload())
-        artifact_paths = artifacts.write_experiment(result, report_markdown=report_markdown, critique=critique.to_payload())
+        artifact_paths = artifacts.write_experiment(
+            result,
+            report_markdown=report_markdown,
+            critique=critique.to_payload(),
+            generator_kind=candidate.planned.generator_kind,
+        )
         ledger.record_result(
             result,
             artifact_paths=artifact_paths,
