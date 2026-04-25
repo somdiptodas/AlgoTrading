@@ -190,9 +190,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 
 ## P3 - Search Space Expansion
 
-- [ ] Add `fixed_fraction` to planner output.
+- [x] Add `fixed_fraction` to planner output.
   - Test fractions such as 0.25, 0.50, and 1.00 across existing signal families.
   - Evaluate whether lower exposure improves drawdown-adjusted returns.
+  - Completed 2026-04-25: planner grid output now emits `fixed_fraction` sizing variants at 0.25, 0.50, and 1.00 across enabled signal families. Existing evaluation, registry, queue, and frontier-neighborhood behavior remain unchanged, with generated specs validated through the registry.
+  - Verification: `.venv/bin/pytest tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_research_queue.py -q` passes 27 tests; `.venv/bin/pytest -q` passes 96 tests. Verification subagent reported no blockers.
 
 - [ ] Add uniform risk-management exits.
   - Start with `stop_loss_bps` in `ExecConfig`.

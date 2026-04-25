@@ -4,7 +4,14 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from trader.strategies.registry import StrategyRegistry
-from trader.strategies.spec import SignalSpec, StrategySpec
+from trader.strategies.spec import SignalSpec, SizingSpec, StrategySpec
+
+
+_SIZING_GRID = (
+    SizingSpec("fixed_fraction", {"fraction": 0.25}),
+    SizingSpec("fixed_fraction", {"fraction": 0.50}),
+    SizingSpec("fixed_fraction", {"fraction": 1.00}),
+)
 
 
 @dataclass(frozen=True)
@@ -30,17 +37,19 @@ class DeterministicPlanner:
         for signal_name in allowed:
             family_candidates: list[PlannedSpec] = []
             for params in self.registry.parameter_grid(signal_name):
-                family_candidates.append(
-                    PlannedSpec(
-                        spec=self._rename(
-                            StrategySpec(
-                                name=f"{signal_name}_grid",
-                                signal=SignalSpec(signal_name, params),
-                            )
-                        ),
-                        generator_kind="grid",
+                for sizing in _SIZING_GRID:
+                    family_candidates.append(
+                        PlannedSpec(
+                            spec=self._rename(
+                                StrategySpec(
+                                    name=f"{signal_name}_grid",
+                                    signal=SignalSpec(signal_name, params),
+                                    sizing=sizing,
+                                )
+                            ),
+                            generator_kind="grid",
+                        )
                     )
-                )
             grid_buckets.append(family_candidates)
         frontier_buckets = {signal_name: [] for signal_name in allowed}
         for parent_experiment_id, parent_spec in sorted(frontier_specs, key=lambda item: item[0]):

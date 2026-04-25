@@ -41,6 +41,31 @@ def test_planner_reserves_grid_slot_for_each_enabled_family_before_truncation() 
     assert all(item.spec.filters == tuple() for item in planned)
 
 
+def test_planner_emits_fixed_fraction_sizing_across_enabled_families() -> None:
+    planner = DeterministicPlanner(REGISTRY)
+
+    planned = planner.plan(
+        batch_size=9,
+        allowed_signal_families=("ema_cross", "breakout", "rsi_reversion"),
+    )
+
+    assert {
+        (item.spec.signal.name, item.spec.sizing.name, item.spec.sizing.params["fraction"])
+        for item in planned
+    } == {
+        ("ema_cross", "fixed_fraction", 0.25),
+        ("ema_cross", "fixed_fraction", 0.50),
+        ("ema_cross", "fixed_fraction", 1.00),
+        ("breakout", "fixed_fraction", 0.25),
+        ("breakout", "fixed_fraction", 0.50),
+        ("breakout", "fixed_fraction", 1.00),
+        ("rsi_reversion", "fixed_fraction", 0.25),
+        ("rsi_reversion", "fixed_fraction", 0.50),
+        ("rsi_reversion", "fixed_fraction", 1.00),
+    }
+    assert all(REGISTRY.validate_spec(item.spec) for item in planned)
+
+
 def test_planner_frontier_is_not_crowded_out_by_grid_ordering() -> None:
     planner = DeterministicPlanner(REGISTRY)
     parent = REGISTRY.validate_spec(
