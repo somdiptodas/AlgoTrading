@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from trader.data.models import MarketBar
-from trader.features.primitives import ema, rolling_max_exclusive, rolling_min_exclusive
+from trader.features.primitives import ema, rolling_max_exclusive, rolling_min_exclusive, rsi
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,9 @@ class FeaturePipeline:
 
     def rolling_low_for_test(self, window: int) -> list[float | None]:
         return rolling_min_exclusive(self.low_series(), window)[self.history_count :]
+
+    def rsi_for_test(self, length: int) -> list[float | None]:
+        return rsi(self.close_series(), length)[self.history_count :]
 
     def combined_index_for_test(self, test_index: int) -> int:
         return self.history_count + test_index

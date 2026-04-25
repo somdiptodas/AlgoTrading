@@ -1,16 +1,37 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from trader.evaluation.runner import ExperimentResult
-from trader.ledger.entry import LedgerEntry, entry_from_json, entry_to_json
+from trader.ledger.entry import LedgerEntry, entry_from_json, entry_to_json, utc_now_iso
 from trader.ledger.query import LedgerQueryHelper
+from trader.research.suppressor import SuppressedSpec
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS suppression_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    loop_run_id TEXT NOT NULL,
+    spec_hash TEXT NOT NULL,
+    signal_family TEXT NOT NULL,
+    nearest_failure_experiment_id TEXT NOT NULL,
+    nearest_failure_distance REAL NOT NULL,
+    failed_check_names TEXT NOT NULL,
+    failure_count_in_radius INTEGER NOT NULL DEFAULT 0,
+    suppression_weight REAL NOT NULL,
+    logged_at_utc TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_suppression_log_run
+ON suppression_log (loop_run_id, logged_at_utc DESC);
+
+CREATE INDEX IF NOT EXISTS idx_suppression_log_family
+ON suppression_log (signal_family, suppression_weight DESC);
+
 CREATE TABLE IF NOT EXISTS ledger_entries (
     experiment_id TEXT PRIMARY KEY,
     evaluation_key TEXT NOT NULL UNIQUE,
@@ -209,6 +230,74 @@ class LedgerStore:
         return {
             "total": sum(counts.values()),
             "by_status": counts,
+        }
+
+    def log_suppression_batch(
+        self,
+        loop_run_id: str,
+        records: Sequence[SuppressedSpec],
+    ) -> int:
+        """
+        Persist suppression audit records for this loop run.
+        Returns the number of rows written.
+        """
+        if not records:
+            return 0
+        now = utc_now_iso()
+        rows = [
+            (
+                loop_run_id,
+                record.spec_hash,
+                record.signal_family,
+                record.nearest_failure_experiment_id,
+                record.nearest_failure_distance,
+                json.dumps(list(record.failed_check_names)),
+                record.failure_count_in_radius,
+                record.suppression_weight,
+                now,
+            )
+            for record in records
+        ]
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO suppression_log (
+                    loop_run_id, spec_hash, signal_family,
+                    nearest_failure_experiment_id, nearest_failure_distance,
+                    failed_check_names, failure_count_in_radius,
+                    suppression_weight, logged_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def suppression_summary(self, loop_run_id: str) -> dict[str, Any]:
+        """Return a summary of suppression decisions for a given loop run."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT signal_family, COUNT(*) AS count,
+                       AVG(suppression_weight) AS avg_weight,
+                       MAX(suppression_weight) AS max_weight
+                FROM suppression_log
+                WHERE loop_run_id = ?
+                GROUP BY signal_family
+                ORDER BY signal_family
+                """,
+                (loop_run_id,),
+            ).fetchall()
+        return {
+            "loop_run_id": loop_run_id,
+            "by_family": [
+                {
+                    "family": str(row["signal_family"]),
+                    "suppressed_count": int(row["count"]),
+                    "avg_weight": round(float(row["avg_weight"]), 3),
+                    "max_weight": round(float(row["max_weight"]), 3),
+                }
+                for row in rows
+            ],
         }
 
     def _connect(self) -> sqlite3.Connection:

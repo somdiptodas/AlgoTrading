@@ -20,9 +20,15 @@ class Trade:
     exit_reason: str
 
 
-def enter_long(cash: float, bar: MarketBar, exec_config: ExecConfig) -> tuple[float, Position | None]:
+def enter_long(
+    cash: float,
+    bar: MarketBar,
+    exec_config: ExecConfig,
+    sizing_fraction: float = 1.0,
+) -> tuple[float, Position | None]:
     fill_price = bar.open * (1.0 + exec_config.slippage_bps / 10_000.0)
-    max_shares = int((cash - exec_config.commission_per_order) // fill_price)
+    deployable = cash * sizing_fraction
+    max_shares = int((deployable - exec_config.commission_per_order) // fill_price)
     if max_shares < 1:
         return cash, None
     cost = (max_shares * fill_price) + exec_config.commission_per_order

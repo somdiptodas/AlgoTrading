@@ -28,22 +28,36 @@ def assess_robustness(
     positive_fold_ratio = sum(1 for value in fold_returns if value > 0) / max(len(fold_returns), 1)
     monthly_returns = _monthly_return_breakdown(full_test_bars)
     monthly_concentration = max((abs(value) for value in monthly_returns.values()), default=0.0)
-    neighborhood_returns = []
+    neighborhood_returns: list[float] = []
+    neighborhood_sharpes: list[float] = []
     for neighbor_spec in registry.neighbors(spec)[:6]:
         try:
-            neighborhood_returns.append(neighbor_metric_fn(neighbor_spec)["return_pct"])
+            neighbor_metrics = neighbor_metric_fn(neighbor_spec)
+            neighborhood_returns.append(neighbor_metrics["return_pct"])
+            neighborhood_sharpes.append(neighbor_metrics["sharpe_like"])
         except Exception:
             continue
-    neighborhood_median = median(neighborhood_returns) if neighborhood_returns else aggregate_metrics["return_pct"]
-    neighborhood_gap = aggregate_metrics["return_pct"] - neighborhood_median
+    neighborhood_return_median = median(neighborhood_returns) if neighborhood_returns else aggregate_metrics["return_pct"]
+    neighborhood_sharpe_median = (
+        median(neighborhood_sharpes) if neighborhood_sharpes else aggregate_metrics.get("sharpe_like", 0.0)
+    )
+    neighborhood_return_gap = aggregate_metrics["return_pct"] - neighborhood_return_median
+    neighborhood_sharpe_gap = aggregate_metrics.get("sharpe_like", 0.0) - neighborhood_sharpe_median
+    # A strategy is neighborhood-stable only if it does not dramatically outperform its
+    # parameter neighbors on BOTH return and risk-adjusted return. A spike in return
+    # alone might be a lucky period; a spike in Sharpe too signals genuine overfitting.
+    neighborhood_pass = neighborhood_return_gap <= 10.0 and neighborhood_sharpe_gap <= 0.5
     checks: dict[str, float | bool] = {
         "positive_fold_ratio": positive_fold_ratio,
         "fold_consistency_pass": positive_fold_ratio >= 0.5,
         "monthly_concentration_pct": monthly_concentration,
         "regime_pass": monthly_concentration < 15.0,
-        "neighborhood_median_return_pct": neighborhood_median,
-        "neighborhood_gap_pct": neighborhood_gap,
-        "neighborhood_pass": neighborhood_gap <= 10.0,
+        "neighborhood_median_return_pct": neighborhood_return_median,
+        "neighborhood_gap_pct": neighborhood_return_gap,  # kept for backward compat
+        "neighborhood_return_gap_pct": neighborhood_return_gap,
+        "neighborhood_median_sharpe_like": neighborhood_sharpe_median,
+        "neighborhood_sharpe_gap": neighborhood_sharpe_gap,
+        "neighborhood_pass": neighborhood_pass,
         "drawdown_pass": aggregate_metrics.get("max_drawdown_pct", 100.0) <= 20.0,
     }
     passed = bool(checks["fold_consistency_pass"] and checks["regime_pass"] and checks["neighborhood_pass"] and checks["drawdown_pass"])

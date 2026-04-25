@@ -5,8 +5,8 @@ from typing import Callable
 
 from trader.data.models import MarketBar
 from trader.strategies.filters import session
-from trader.strategies.signals import breakout, ema_cross
-from trader.strategies.sizers import full_notional
+from trader.strategies.signals import breakout, ema_cross, rsi_reversion
+from trader.strategies.sizers import fixed_fraction, full_notional
 from trader.strategies.spec import FilterSpec, SignalSpec, StrategySpec
 
 
@@ -30,8 +30,24 @@ class StrategyRegistry:
                 "parameter_grid": breakout.parameter_grid,
                 "neighbors": breakout.neighbors,
             },
+            "rsi_reversion": {
+                "normalize_params": rsi_reversion.normalize_params,
+                "required_history": rsi_reversion.required_history,
+                "generate_regime": rsi_reversion.generate_regime,
+                "parameter_grid": rsi_reversion.parameter_grid,
+                "neighbors": rsi_reversion.neighbors,
+            },
         }
-        self.sizing_handlers = {"full_notional": {"normalize_params": full_notional.normalize_params}}
+        self.sizing_handlers = {
+            "full_notional": {
+                "normalize_params": full_notional.normalize_params,
+                "compute_fraction": full_notional.compute_fraction,
+            },
+            "fixed_fraction": {
+                "normalize_params": fixed_fraction.normalize_params,
+                "compute_fraction": fixed_fraction.compute_fraction,
+            },
+        }
         self.filter_handlers = {"session": {"normalize_params": session.normalize_params}}
 
     def validate_spec(self, spec: StrategySpec) -> StrategySpec:
@@ -74,6 +90,10 @@ class StrategyRegistry:
         validated = self.validate_spec(spec)
         handler = self.signal_handlers[validated.signal.name]["generate_regime"]
         return handler(history_bars, test_bars, validated.signal.params)
+
+    def compute_sizing_fraction(self, spec: StrategySpec) -> float:
+        validated = self.validate_spec(spec)
+        return float(self.sizing_handlers[validated.sizing.name]["compute_fraction"](validated.sizing.params))
 
     def parameter_grid(self, signal_name: str) -> tuple[dict[str, int | float], ...]:
         if signal_name not in self.signal_handlers:

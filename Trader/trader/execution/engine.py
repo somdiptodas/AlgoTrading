@@ -22,6 +22,7 @@ def run_long_only_engine(
     bars: Sequence[MarketBar],
     regime_by_bar: Sequence[bool],
     exec_config: ExecConfig,
+    sizing_fraction: float = 1.0,
 ) -> BacktestResult:
     if len(bars) != len(regime_by_bar):
         raise ValueError("bars and regime_by_bar must have identical lengths")
@@ -38,7 +39,7 @@ def run_long_only_engine(
         if pending_action is not None:
             action, reason = pending_action
             if action == "enter":
-                cash, position = enter_long(cash, bar, exec_config)
+                cash, position = enter_long(cash, bar, exec_config, sizing_fraction)
             elif action == "exit" and position is not None:
                 cash, trade = exit_long(cash, position, bar, exec_config, reason, fill_at_close=False)
                 trades.append(trade)

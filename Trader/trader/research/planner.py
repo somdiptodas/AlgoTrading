@@ -23,9 +23,11 @@ class DeterministicPlanner:
         *,
         batch_size: int,
         frontier_specs: Sequence[tuple[str, StrategySpec]] = (),
+        allowed_signal_families: Sequence[str] | None = None,
     ) -> tuple[PlannedSpec, ...]:
+        allowed = tuple(allowed_signal_families or ("ema_cross", "breakout"))
         candidates: list[PlannedSpec] = []
-        for signal_name in ("ema_cross", "breakout"):
+        for signal_name in allowed:
             for params in self.registry.parameter_grid(signal_name):
                 candidates.append(
                     PlannedSpec(
@@ -40,6 +42,8 @@ class DeterministicPlanner:
                     )
                 )
         for parent_experiment_id, parent_spec in sorted(frontier_specs, key=lambda item: item[0]):
+            if parent_spec.signal.name not in allowed:
+                continue
             for neighbor_spec in self.registry.neighbors(parent_spec):
                 candidates.append(
                     PlannedSpec(
