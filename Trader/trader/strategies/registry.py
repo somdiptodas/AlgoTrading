@@ -200,7 +200,7 @@ class StrategyRegistry:
         validated = self.validate_spec(spec)
         return float(self.sizing_handlers[validated.sizing.name]["compute_fraction"](validated.sizing.params))
 
-    def parameter_grid(self, signal_name: str) -> tuple[dict[str, int | float], ...]:
+    def parameter_grid(self, signal_name: str) -> tuple[dict[str, object], ...]:
         if signal_name not in self.signal_handlers:
             raise ValueError(f"Unknown signal handler: {signal_name}")
         return self.signal_handlers[signal_name]["parameter_grid"]()

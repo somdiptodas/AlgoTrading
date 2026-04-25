@@ -194,3 +194,87 @@ def test_planner_emits_curated_confirmation_specs_before_default_budget_truncati
         ("vwap_deviation", "relative_volume"),
     }
     assert all("confirmation" in spec.tags for spec in confirmation_specs)
+
+
+def test_planner_emits_curated_composite_specs_before_default_budget_truncation() -> None:
+    planner = DeterministicPlanner(REGISTRY)
+
+    planned = planner.plan(
+        batch_size=64,
+        allowed_signal_families=("ema_cross", "breakout", "rsi_reversion", "vwap_deviation", "composite"),
+    )
+    composite_specs = [item.spec for item in planned if item.generator_kind == "composite_grid"]
+
+    assert composite_specs
+    assert {spec.tags[1] for spec in composite_specs} == {
+        "ema_rsi_all",
+        "breakout_trend_volume",
+        "vwap_rsi_all",
+        "ema_breakout_rsi_vote",
+        "ema_chop_rsi_all",
+        "breakout_open_volume",
+    }
+    assert all(REGISTRY.validate_spec(spec) for spec in composite_specs)
+    assert all("composite" in spec.tags for spec in composite_specs)
+
+
+def test_planner_caps_composite_bucket_and_represents_canonical_shapes() -> None:
+    planner = DeterministicPlanner(REGISTRY)
+
+    planned = planner.plan(
+        batch_size=200,
+        allowed_signal_families=("composite",),
+    )
+    composite_plans = [item for item in planned if item.generator_kind == "composite_grid"]
+    composite_specs = [item.spec for item in composite_plans]
+
+    assert len(composite_specs) <= 24
+    assert {spec.tags[1] for spec in composite_specs} == {
+        "ema_rsi_all",
+        "breakout_trend_volume",
+        "vwap_rsi_all",
+        "ema_breakout_rsi_vote",
+        "ema_chop_rsi_all",
+        "breakout_open_volume",
+    }
+    assert max(
+        sum(1 for spec in composite_specs if spec.tags[1] == recipe)
+        for recipe in {spec.tags[1] for spec in composite_specs}
+    ) == 3
+    assert any(
+        spec.signal.name == "composite"
+        and spec.signal.params["combiner"] == "all"
+        and _child_names(spec) == ("ema_cross", "rsi_reversion")
+        for spec in composite_specs
+    )
+    assert any(
+        spec.signal.name == "composite"
+        and spec.signal.params["combiner"] == "vote_k_of_n"
+        and spec.signal.params["min_agreeing"] == 2
+        and _child_names(spec) == ("ema_cross", "breakout", "rsi_reversion")
+        for spec in composite_specs
+    )
+    assert any(
+        spec.signal.name == "breakout"
+        and {filter_spec.name for filter_spec in spec.filters} == {"relative_volume", "day_type"}
+        and any(filter_spec.params.get("mode") == "trend" for filter_spec in spec.filters)
+        for spec in composite_specs
+    )
+    assert any(
+        spec.signal.name == "ema_cross"
+        and any(filter_spec.name == "day_type" and filter_spec.params.get("mode") == "mean_reversion" for filter_spec in spec.filters)
+        for spec in composite_specs
+    )
+    assert any(
+        spec.signal.name == "breakout"
+        and spec.exec_config.entry_session_window == "first_30m"
+        and any(filter_spec.name == "relative_volume" for filter_spec in spec.filters)
+        for spec in composite_specs
+    )
+    assert all(REGISTRY.validate_spec(spec) for spec in composite_specs)
+
+
+def _child_names(spec: StrategySpec) -> tuple[str, ...]:
+    children = spec.signal.params["children"]
+    assert isinstance(children, list)
+    return tuple(str(child["name"]) for child in children)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES
 from trader.cli.loop_cmd import _add_timing, _max_preview_count, _new_timings, _planned_spec_count, _suppression_audit_types, _timing_payload
+from trader.cli.loop_cmd import build_parser
 from trader.research.suppressor import SuppressedSpec
 
 
@@ -38,3 +39,9 @@ def test_timing_payload_includes_all_loop_phases(monkeypatch) -> None:
     assert tuple(payload) == TIMING_PHASES
     assert payload["planning"] == 0.123457
     assert payload["stage_a"] == 0.0
+
+
+def test_loop_signal_family_accepts_composite() -> None:
+    args = build_parser().parse_args(["--signal-family", "composite"])
+
+    assert args.signal_family == ["composite"]
