@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
 from typing import Sequence
 
@@ -14,6 +16,9 @@ from trader.evaluation.splits import Fold, build_walk_forward_folds
 from trader.execution.engine import BacktestResult, run_long_only_engine
 from trader.strategies.registry import StrategyRegistry
 from trader.strategies.spec import StrategySpec
+
+DEFAULT_LOCKED_HOLDOUT_MONTHS = 3
+_HOLDOUT_STAGES = {"candidate"}
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,7 @@ class ExperimentResult:
     fold_results: tuple[FoldResult, ...]
     robustness_checks: dict[str, float | bool]
     promotion_stage: str
+    holdout_result: FoldResult | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,8 @@ class EvaluationPreview:
     required_history: int
     cost_model_id: str
     evaluation_key: str
+    holdout_bars: tuple[MarketBar, ...] = tuple()
+    holdout_snapshot_id: str | None = None
 
 
 class EvaluationRunner:
@@ -96,6 +104,7 @@ class EvaluationRunner:
         end_ms: int | None = None,
         include_robustness: bool = True,
         experiment_id: str | None = None,
+        locked_holdout_months: int | None = None,
     ) -> ExperimentResult:
         preview = self.preview_walk_forward(
             spec,
@@ -103,6 +112,7 @@ class EvaluationRunner:
             embargo_bars=embargo_bars,
             start_ms=start_ms,
             end_ms=end_ms,
+            locked_holdout_months=locked_holdout_months,
         )
         return self.evaluate_preview(
             preview,
@@ -134,6 +144,12 @@ class EvaluationRunner:
             if include_robustness
             else RobustnessResult(checks={}, passed=False)
         )
+        stage = promotion_stage(aggregate_metrics, robustness.checks)
+        holdout_result = (
+            self._evaluate_holdout(preview.spec, preview)
+            if stage in _HOLDOUT_STAGES and preview.holdout_bars
+            else None
+        )
         return ExperimentResult(
             experiment_id=experiment_id,
             status="completed",
@@ -145,7 +161,8 @@ class EvaluationRunner:
             aggregate_metrics=aggregate_metrics,
             fold_results=fold_results,
             robustness_checks=robustness.checks,
-            promotion_stage=promotion_stage(aggregate_metrics, robustness.checks),
+            promotion_stage=stage,
+            holdout_result=holdout_result,
         )
 
     def preview_walk_forward(
@@ -156,12 +173,18 @@ class EvaluationRunner:
         embargo_bars: int = 1,
         start_ms: int | None = None,
         end_ms: int | None = None,
+        locked_holdout_months: int | None = None,
     ) -> EvaluationPreview:
         validated = self.registry.validate_spec(spec)
-        data_slice = self._load_data_slice(
+        full_slice = self._load_data_slice(
             validated,
             start_ms=start_ms,
             end_ms=end_ms,
+        )
+        data_slice, holdout_bars, holdout_snapshot_id = self._split_research_and_holdout(
+            full_slice,
+            embargo_bars=embargo_bars,
+            locked_holdout_months=locked_holdout_months,
         )
         required_history = self.registry.required_history(validated)
         split_plan_id, folds = self._load_split_plan(
@@ -184,6 +207,8 @@ class EvaluationRunner:
                 split_plan_id,
                 cost_model_id,
             ),
+            holdout_bars=holdout_bars,
+            holdout_snapshot_id=holdout_snapshot_id,
         )
 
     def _evaluate_fold(self, spec: StrategySpec, fold: Fold, bars: tuple[MarketBar, ...]) -> FoldResult:
@@ -223,6 +248,32 @@ class EvaluationRunner:
         )
         self._fold_result_cache[cache_key] = fold_result
         return fold_result
+
+    def _evaluate_holdout(self, spec: StrategySpec, preview: EvaluationPreview) -> FoldResult:
+        train_bars = preview.data_slice.bars
+        test_bars = preview.holdout_bars
+        regime = self.registry.generate_regime(spec, train_bars, test_bars)
+        sizing_fraction = self.registry.compute_sizing_fraction(spec)
+        result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
+        metrics = calculate_metrics(result)
+        baselines = evaluate_baselines(
+            test_bars,
+            spec.exec_config,
+            strategy_trades=result.trades,
+            seed_material=f"{spec.spec_hash()}|holdout|{test_bars[0].timestamp_utc}|{test_bars[-1].timestamp_utc}",
+        )
+        return FoldResult(
+            fold_id="holdout",
+            train_start_utc=train_bars[0].timestamp_utc if train_bars else "",
+            train_end_utc=train_bars[-1].timestamp_utc if train_bars else "",
+            test_start_utc=test_bars[0].timestamp_utc,
+            test_end_utc=test_bars[-1].timestamp_utc,
+            metrics=metrics,
+            baseline_metrics=baselines,
+            baseline_deltas=baseline_deltas(metrics, baselines),
+            warnings=tuple(),
+            backtest=result,
+        )
 
     def _evaluate_preview_folds(
         self,
@@ -278,6 +329,34 @@ class EvaluationRunner:
         self._data_slice_cache[cache_key] = data_slice
         return data_slice
 
+    def _split_research_and_holdout(
+        self,
+        data_slice: DataSlice,
+        *,
+        embargo_bars: int,
+        locked_holdout_months: int | None = DEFAULT_LOCKED_HOLDOUT_MONTHS,
+    ) -> tuple[DataSlice, tuple[MarketBar, ...], str | None]:
+        if not data_slice.bars or locked_holdout_months is None or locked_holdout_months <= 0:
+            return data_slice, tuple(), None
+        cutoff = _subtract_months(data_slice.bars[-1].dt_local, locked_holdout_months)
+        holdout_start_idx = len(data_slice.bars)
+        for index, bar in enumerate(data_slice.bars):
+            if bar.dt_local >= cutoff:
+                holdout_start_idx = index
+                break
+        research_end_idx = holdout_start_idx - max(embargo_bars, 0)
+        if research_end_idx <= 0 or holdout_start_idx == len(data_slice.bars):
+            raise RuntimeError("Not enough pre-holdout bars for the locked holdout policy")
+        research_bars = data_slice.bars[:research_end_idx]
+        holdout_bars = data_slice.bars[holdout_start_idx:]
+        research_slice = DataSlice(
+            bars=research_bars,
+            snapshot_id=DataView.snapshot_hash(research_bars),
+            first_timestamp_utc=research_bars[0].timestamp_utc,
+            last_timestamp_utc=research_bars[-1].timestamp_utc,
+        )
+        return research_slice, holdout_bars, DataView.snapshot_hash(holdout_bars)
+
     def _load_split_plan(
         self,
         data_slice: DataSlice,
@@ -304,3 +383,13 @@ class EvaluationRunner:
         )
         self._split_cache[cache_key] = split_plan
         return split_plan
+
+
+def _subtract_months(value: datetime, months: int) -> datetime:
+    month = value.month - months
+    year = value.year
+    while month <= 0:
+        month += 12
+        year -= 1
+    day = min(value.day, monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)

@@ -13,7 +13,14 @@ from trader.data.models import MarketBar
 from trader.evaluation.runner import ExperimentResult, FoldResult
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
-from trader.ledger.entry import LedgerEntry, entry_from_json, experiment_result_to_payload, json_dumps, json_loads
+from trader.ledger.entry import (
+    LedgerEntry,
+    entry_from_json,
+    experiment_result_to_ledger_payload,
+    experiment_result_to_payload,
+    json_dumps,
+    json_loads,
+)
 from trader.ledger.query import LedgerQueryHelper
 import trader.ledger.store as ledger_store_module
 from trader.ledger.store import SCHEMA, LedgerStore
@@ -190,6 +197,54 @@ def test_legacy_full_ledger_entry_json_still_reads() -> None:
     assert len(entry.fold_results[0].backtest.bars) == 3
     assert len(entry.fold_results[0].backtest.trades) == 1
     assert entry.fold_results[0].backtest.equity_curve == (100_000.0, 100_010.0, 100_015.0)
+
+
+def test_holdout_result_serializes_separately_from_research_folds() -> None:
+    result = _sample_result()
+    holdout = replace(result.fold_results[0], fold_id="holdout")
+    with_holdout = replace(result, holdout_result=holdout)
+
+    payload = experiment_result_to_payload(with_holdout)
+    ledger_payload = experiment_result_to_ledger_payload(with_holdout)
+    round_tripped = entry_from_json(
+        json_dumps(
+            {
+                "experiment_id": result.experiment_id,
+                "evaluation_key": "holdout_key",
+                "status": result.status,
+                "result": ledger_payload,
+                "artifact_paths": {},
+                "generator_kind": "grid",
+                "parent_experiment_ids": [],
+                "critique": None,
+                "created_at_utc": "2026-01-05T00:00:00+00:00",
+                "updated_at_utc": "2026-01-05T00:00:00+00:00",
+                "completed_at_utc": "2026-01-05T00:00:00+00:00",
+            }
+        )
+    )
+
+    assert len(payload["fold_results"]) == 1
+    assert payload["holdout_result"]["fold_id"] == "holdout"
+    assert len(ledger_payload["fold_results"]) == 1
+    assert "backtest_summary" in ledger_payload["holdout_result"]
+    assert round_tripped.holdout_result is not None
+    assert round_tripped.holdout_result.fold_id == "holdout"
+
+
+def test_ledger_round_trip_preserves_holdout_result(tmp_path: Path) -> None:
+    result = _sample_result()
+    holdout = replace(result.fold_results[0], fold_id="holdout")
+    with_holdout = replace(result, holdout_result=holdout)
+    ledger = LedgerStore(tmp_path / "ledger.db")
+    ledger.initialize()
+
+    entry = ledger.record_result(with_holdout, artifact_paths={}, generator_kind="grid")
+    fetched = ledger.get_by_evaluation_key(entry.evaluation_key)
+
+    assert fetched is not None
+    assert fetched.to_result().holdout_result is not None
+    assert fetched.to_result().holdout_result.fold_id == "holdout"
 
 
 def test_top_experiments_ranks_from_scalar_columns_before_deserializing_winners(

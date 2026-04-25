@@ -195,7 +195,7 @@ def fold_result_from_payload(payload: dict[str, Any]) -> FoldResult:
 
 
 def experiment_result_to_payload(result: ExperimentResult) -> dict[str, object]:
-    return {
+    payload = {
         "experiment_id": result.experiment_id,
         "status": result.status,
         "spec": result.spec.to_payload(),
@@ -208,10 +208,13 @@ def experiment_result_to_payload(result: ExperimentResult) -> dict[str, object]:
         "robustness_checks": dict(result.robustness_checks),
         "promotion_stage": result.promotion_stage,
     }
+    if result.holdout_result is not None:
+        payload["holdout_result"] = fold_result_to_payload(result.holdout_result)
+    return payload
 
 
 def experiment_result_to_ledger_payload(result: ExperimentResult) -> dict[str, object]:
-    return {
+    payload = {
         "experiment_id": result.experiment_id,
         "status": result.status,
         "spec": result.spec.to_payload(),
@@ -224,9 +227,13 @@ def experiment_result_to_ledger_payload(result: ExperimentResult) -> dict[str, o
         "robustness_checks": dict(result.robustness_checks),
         "promotion_stage": result.promotion_stage,
     }
+    if result.holdout_result is not None:
+        payload["holdout_result"] = fold_result_to_ledger_payload(result.holdout_result)
+    return payload
 
 
 def experiment_result_from_payload(payload: dict[str, Any]) -> ExperimentResult:
+    holdout_payload = payload.get("holdout_result")
     return ExperimentResult(
         experiment_id=str(payload["experiment_id"]),
         status=str(payload.get("status", "completed")),
@@ -239,6 +246,7 @@ def experiment_result_from_payload(payload: dict[str, Any]) -> ExperimentResult:
         fold_results=tuple(fold_result_from_payload(item) for item in payload.get("fold_results", ())),
         robustness_checks=_robustness_dict(dict(payload.get("robustness_checks", {}))),
         promotion_stage=str(payload.get("promotion_stage", "exploratory")),
+        holdout_result=None if holdout_payload is None else fold_result_from_payload(dict(holdout_payload)),
     )
 
 
@@ -264,6 +272,7 @@ class LedgerEntry:
     fold_results: tuple[FoldResult, ...]
     robustness_checks: dict[str, float | bool]
     promotion_stage: str
+    holdout_result: FoldResult | None = None
     artifact_paths: dict[str, str] = field(default_factory=dict)
     generator_kind: str = "unknown"
     parent_experiment_ids: tuple[str, ...] = ()
@@ -302,6 +311,7 @@ class LedgerEntry:
             fold_results=tuple(result.fold_results),
             robustness_checks=dict(result.robustness_checks),
             promotion_stage=result.promotion_stage,
+            holdout_result=result.holdout_result,
             artifact_paths=dict(sorted((str(key), str(value)) for key, value in artifact_paths.items())),
             generator_kind=generator_kind,
             parent_experiment_ids=tuple(parent_experiment_ids),
@@ -327,6 +337,7 @@ class LedgerEntry:
             fold_results=tuple(self.fold_results),
             robustness_checks=dict(self.robustness_checks),
             promotion_stage=self.promotion_stage,
+            holdout_result=self.holdout_result,
         )
 
     def to_payload(self) -> dict[str, object]:

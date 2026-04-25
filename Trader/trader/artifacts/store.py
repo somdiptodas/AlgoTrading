@@ -127,6 +127,14 @@ class ArtifactStore:
             f"- Max drawdown %: `{result.aggregate_metrics.get('max_drawdown_pct', 0.0):.3f}`",
             "",
         ]
+        if result.holdout_result is not None:
+            lines.extend(
+                [
+                    f"- Holdout return %: `{result.holdout_result.metrics.get('return_pct', 0.0):.3f}`",
+                    f"- Holdout annualized Sharpe: `{result.holdout_result.metrics.get('annualized_sharpe', 0.0):.3f}`",
+                    "",
+                ]
+            )
         if critique:
             lines.append("## Critique")
             lines.append("")

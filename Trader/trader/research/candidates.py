@@ -50,6 +50,7 @@ class DeterministicCandidateQueue:
         runner: EvaluationRunner,
         num_folds: int,
         embargo_bars: int,
+        locked_holdout_months: int | None = None,
     ) -> CandidateQueueResult:
         candidates: list[ScoredCandidate] = []
         suppression_records: list[SuppressedSpec] = []
@@ -61,6 +62,7 @@ class DeterministicCandidateQueue:
                     planned.spec,
                     num_folds=num_folds,
                     embargo_bars=embargo_bars,
+                    locked_holdout_months=locked_holdout_months,
                 )
             except Exception:
                 continue

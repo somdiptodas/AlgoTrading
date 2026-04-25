@@ -110,10 +110,13 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: kept `always_flat` and `buy_and_hold`, added `regular_session_open_to_close_long`, engine-faithful `session_long_flat_at_close`, and deterministic `randomized_entry_same_exposure` baselines. The randomized baseline is seeded from spec/fold/window material, uses cost-aware fills, preserves realized trade count and exposure when a valid schedule exists, and otherwise falls back explicitly to flat.
   - Verification: `.venv/bin/pytest tests/test_baselines.py tests/test_research_queue.py -q` passes 8 tests; `.venv/bin/pytest -q` passes 54 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Add a locked holdout policy.
+- [x] Add a locked holdout policy.
   - Reserve the most recent 3-6 months from research-loop selection.
   - Only run promoted candidates against this holdout.
   - Track holdout results separately from research folds.
+  - Completed 2026-04-25: added a loop-level locked holdout policy with `--holdout-months` defaulting to 3 calendar months. Candidate previews build research folds only from pre-holdout bars with an embargo gap, short/constrained slices fail closed when no pre-holdout research data remains, and holdout evaluation runs only after a result reaches `candidate`.
+  - Tracking: `ExperimentResult` and `LedgerEntry` now preserve an optional `holdout_result` separately from research `fold_results` and aggregate metrics; reports/artifact summaries display holdout metrics when present.
+  - Verification: `.venv/bin/pytest tests/test_holdout.py tests/test_ledger.py tests/test_research_queue.py -q` passes 16 tests; `.venv/bin/pytest -q` passes 59 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Add data-quality validation before evaluation.
   - Detect missing bars, duplicate timestamps, null OHLC, OHLC sanity violations, volume anomalies, and unexpected session lengths.

@@ -7,7 +7,7 @@ from hashlib import sha256
 from trader.artifacts.store import ArtifactStore
 from trader.config import load_settings
 from trader.data.view import DataView
-from trader.evaluation.runner import EvaluationRunner
+from trader.evaluation.runner import DEFAULT_LOCKED_HOLDOUT_MONTHS, EvaluationRunner
 from trader.ledger.entry import json_dumps
 from trader.ledger.store import LedgerStore
 from trader.reporting.report import render_experiment_report
@@ -28,6 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=6)
     parser.add_argument("--folds", type=int, default=3)
     parser.add_argument("--embargo-bars", type=int, default=1)
+    parser.add_argument("--holdout-months", type=int, default=DEFAULT_LOCKED_HOLDOUT_MONTHS)
     parser.add_argument("--frontier-limit", type=int, default=5)
     parser.add_argument(
         "--signal-family",
@@ -106,6 +107,7 @@ def main(argv: list[str] | None = None) -> None:
         runner=runner,
         num_folds=args.folds,
         embargo_bars=args.embargo_bars,
+        locked_holdout_months=args.holdout_months,
     )
 
     # --- Persist suppression audit records to the ledger ---

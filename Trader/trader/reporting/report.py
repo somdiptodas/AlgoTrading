@@ -135,6 +135,7 @@ def render_experiment_report(
         _render_strategy(result.spec),
         _render_metric_block("Aggregate Metrics", result.aggregate_metrics, _PRIMARY_METRIC_ORDER),
         _render_metric_block("Robustness Checks", result.robustness_checks, _ROBUSTNESS_ORDER),
+        _render_holdout(result.holdout_result),
         _render_folds(result.fold_results),
         _render_context(_normalize_context("Frontier Context", frontier)),
         _render_context(_normalize_context("Critique", critique)),
@@ -262,6 +263,26 @@ def _render_context(context: ReportSectionContext | None) -> str:
             lines.append(entry.detail)
         for label, value in entry.metrics:
             lines.append(f"- {label}: {value}")
+    return "\n".join(lines)
+
+
+def _render_holdout(holdout: FoldResult | None) -> str:
+    if holdout is None:
+        return ""
+    lines = ["## Holdout"]
+    lines.append(
+        "- "
+        + ", ".join(
+            (
+                f"test={holdout.test_start_utc} to {holdout.test_end_utc}",
+                f"return={_format_metric_value('return_pct', holdout.metrics.get('return_pct', 0.0))}",
+                f"annualized_sharpe={_format_metric_value('annualized_sharpe', holdout.metrics.get('annualized_sharpe', 0.0))}",
+                f"drawdown={_format_metric_value('max_drawdown_pct', holdout.metrics.get('max_drawdown_pct', 0.0))}",
+                f"trades={_format_metric_value('trade_count', holdout.metrics.get('trade_count', 0.0))}",
+                f"bars={len(holdout.backtest.bars)}",
+            )
+        )
+    )
     return "\n".join(lines)
 
 
