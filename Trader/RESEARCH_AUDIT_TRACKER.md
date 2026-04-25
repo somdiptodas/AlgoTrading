@@ -136,9 +136,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 
 ## P2 - Loop Efficiency And Search Control
 
-- [ ] Make planner allocation explicit.
+- [x] Make planner allocation explicit.
   - Reserve slots for grid exploration, frontier neighborhoods, and each enabled family before truncation.
   - Avoid frontier candidates being accidentally crowded out by grid ordering.
+  - Completed 2026-04-25: `DeterministicPlanner` now builds explicit grid buckets per enabled family and frontier-neighborhood buckets per enabled family, then round-robins across non-empty buckets before truncation/dedupe. Frontier neighborhoods and later grid families can no longer be crowded out by early grid ordering when the batch has enough capacity.
+  - Verification: `.venv/bin/pytest tests/test_planner.py tests/test_research_queue.py -q` passes 7 tests; `.venv/bin/pytest -q` passes 73 tests. Verification subagent reported no blockers.
 
 - [ ] Replace the hidden `batch_size * 12` over-plan factor.
   - Use a named configuration value.
