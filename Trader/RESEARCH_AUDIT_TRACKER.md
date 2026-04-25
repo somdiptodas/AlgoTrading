@@ -14,7 +14,7 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 - Best observed absolute return: about +2.11%, still about -10.63 percentage points behind buy-and-hold.
 - Research storage size: about 7.0 GB total, including 4.8 GB artifacts and 2.2 GB `ledger.db`.
 - Ledger JSON payload size: about 2.24 GB total, averaging about 31 MB per ledger row.
-- Test status: `.venv/bin/pytest -q` currently fails 1 test and passes 12.
+- Test status: `.venv/bin/pytest -q` passes 13 tests as of 2026-04-25 after pinning the legacy EMA regression to a fixed characterization window.
 
 ## Verification Of Claude Audit
 
@@ -43,9 +43,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 
 ## P0 - Blockers And Correctness Fixes
 
-- [ ] Fix `tests/test_backtest_regression.py` so the suite is green.
+- [x] Fix `tests/test_backtest_regression.py` so the suite is green.
   - Pin the regression to a fixed start/end date range or use a fixture DB.
   - Do not assert against "all data" in a growing market-data database.
+  - Completed 2026-04-25: pinned the legacy EMA regression to the `2025-10-21` through `2026-04-20` New York session window, preserving the characterized `48,002` bars, `391` trades, and `$94,959.18` final cash.
+  - Verification: `.venv/bin/pytest -q` passes 13 tests.
 
 - [ ] Replace `regime_pass` with a strategy-specific concentration check.
   - Use strategy returns, equity deltas, or trade PnL by calendar month.
