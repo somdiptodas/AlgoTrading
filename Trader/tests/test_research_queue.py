@@ -8,6 +8,7 @@ from trader.data.models import AggregateBar
 from trader.data.storage import SQLiteBarStore
 from trader.data.view import DataView
 from trader.evaluation.runner import EvaluationRunner
+from trader.ledger.entry import LedgerEntry
 from trader.ledger.store import LedgerStore
 from trader.research.candidates import DeterministicCandidateQueue
 from trader.research.planner import PlannedSpec
@@ -316,3 +317,40 @@ def test_candidate_queue_counts_duplicates_beyond_preview_limit(tmp_path: Path) 
     assert queue_result.previewed_count == 1
     assert queue_result.duplicate_count == 1
     assert len(queue_result.selected) == 1
+
+
+def test_candidate_queue_applies_critic_planning_penalties(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    preview = runner.preview_walk_forward(
+        _spec("ema_history", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        num_folds=3,
+        embargo_bars=1,
+    )
+    result = runner.evaluate_preview(preview, include_robustness=False)
+    penalized_entry = LedgerEntry.from_result(
+        result,
+        evaluation_key="penalized_key",
+        artifact_paths={},
+        generator_kind="grid",
+        critique={"planning_penalties": {"benchmark_failure": 25.0}},
+    )
+    queue = DeterministicCandidateQueue(history_entries=(penalized_entry,), frontier_entries=())
+    queue_result = queue.build(
+        planned_specs=(
+            PlannedSpec(
+                _spec("ema_candidate", "ema_cross", {"fast_length": 8, "slow_length": 34, "signal_buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+            PlannedSpec(
+                _spec("breakout_candidate", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+        ),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+    )
+
+    assert queue_result.selected[0].family == "breakout"

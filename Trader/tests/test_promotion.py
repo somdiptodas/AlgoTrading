@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from trader.evaluation.promotion import MIN_PROMOTION_TRADE_COUNT, promotion_stage
-from trader.research.critic import HeuristicCritic
+from trader.research.critic import HeuristicCritic, planning_penalty_from_critique
 
 
 def _metrics(**overrides: float) -> dict[str, float]:
@@ -79,9 +79,38 @@ def test_legacy_sharpe_like_is_used_when_annualized_sharpe_is_absent() -> None:
 
 def test_critic_does_not_treat_legacy_frontier_as_promising() -> None:
     result = SimpleNamespace(
-        aggregate_metrics={"return_pct": 1.0, "delta_buy_and_hold_return_pct": 1.0},
+        aggregate_metrics={"return_pct": 1.0, "delta_buy_and_hold_return_pct": 1.0, "trade_count": 10.0},
         robustness_checks={"fold_consistency_pass": True, "neighborhood_pass": True},
         promotion_stage="frontier",
     )
 
     assert HeuristicCritic().critique(result).verdict == "fragile"
+
+
+def test_critic_emits_planning_penalties_for_actionable_notes() -> None:
+    result = SimpleNamespace(
+        aggregate_metrics={"return_pct": -1.0, "delta_buy_and_hold_return_pct": -2.0, "trade_count": 750.0},
+        robustness_checks={"fold_consistency_pass": False, "neighborhood_pass": True},
+        promotion_stage="exploratory",
+    )
+
+    critique = HeuristicCritic().critique(result)
+
+    assert critique.planning_penalties == {
+        "non_positive_return": 12.0,
+        "benchmark_failure": 10.0,
+        "fold_inconsistency": 8.0,
+        "excessive_trading": 6.0,
+    }
+    assert critique.to_payload()["planning_penalties"] == critique.planning_penalties
+
+
+def test_planning_penalty_from_critique_supports_legacy_notes() -> None:
+    payload = {
+        "notes": [
+            "Strategy does not beat buy-and-hold on average OOS return.",
+            "Returns are too concentrated across folds.",
+        ]
+    }
+
+    assert planning_penalty_from_critique(payload) == 18.0

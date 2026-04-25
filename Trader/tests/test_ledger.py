@@ -134,6 +134,24 @@ def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:
         assert Path(path).exists()
 
 
+def test_ledger_preserves_critique_planning_penalties(tmp_path: Path) -> None:
+    result = _sample_result()
+    ledger = LedgerStore(tmp_path / "ledger.db")
+    ledger.initialize()
+    critique = {
+        "verdict": "fragile",
+        "notes": ["Strategy does not beat buy-and-hold on average OOS return."],
+        "next_focus": ["Search for lower-drawdown variants before promoting."],
+        "planning_penalties": {"benchmark_failure": 10.0},
+    }
+
+    entry = ledger.record_result(result, artifact_paths={}, generator_kind="grid", critique=critique)
+    fetched = ledger.get_by_evaluation_key(entry.evaluation_key)
+
+    assert fetched is not None
+    assert fetched.critique == critique
+
+
 def test_suppression_log_separates_audit_types(tmp_path: Path) -> None:
     ledger = LedgerStore(tmp_path / "ledger.db")
     ledger.initialize()

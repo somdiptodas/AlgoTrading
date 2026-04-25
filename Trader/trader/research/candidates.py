@@ -5,6 +5,7 @@ from typing import Iterable, Sequence
 
 from trader.evaluation.runner import EvaluationPreview, EvaluationRunner
 from trader.ledger.entry import LedgerEntry
+from trader.research.critic import planning_penalty_from_critique
 from trader.research.planner import PlannedSpec
 from trader.research.suppressor import RegionSuppressor, SuppressedSpec, spec_distance
 from trader.strategies.spec import StrategySpec
@@ -44,6 +45,9 @@ class DeterministicCandidateQueue:
         self._frontier_by_id = {entry.experiment_id: entry for entry in self.frontier_entries}
         self._family_counts = {family: len(entries) for family, entries in self._history_by_family.items()}
         self._max_family_count = max(self._family_counts.values(), default=0)
+        self._critic_penalty_by_family = {
+            family: self._critic_penalty(entries) for family, entries in self._history_by_family.items()
+        }
         self._historical_eval_keys = {entry.evaluation_key for entry in self.history_entries}
 
     def build(
@@ -153,6 +157,7 @@ class DeterministicCandidateQueue:
             + (self._parent_score(planned) * 0.25)
             + (self._novelty_to_history_spec(spec) * 10.0)
             + simplicity_boost
+            - self._critic_penalty_by_family.get(spec.signal.name, 0.0)
         )
 
     def _select_candidates(self, candidates: Sequence[ScoredCandidate]) -> tuple[ScoredCandidate, ...]:
@@ -218,6 +223,7 @@ class DeterministicCandidateQueue:
             + (novelty * 10.0)
             + simplicity_boost
             - suppression_penalty
+            - self._critic_penalty_by_family.get(preview.spec.signal.name, 0.0)
         )
 
     def _family_quality(self, family: str) -> float:
@@ -252,6 +258,15 @@ class DeterministicCandidateQueue:
                 - entry.metric("max_drawdown_pct")
             )
         return max(scores, default=0.0)
+
+    @staticmethod
+    def _critic_penalty(entries: Sequence[LedgerEntry]) -> float:
+        penalties = []
+        for entry in entries:
+            penalties.append(planning_penalty_from_critique(entry.critique))
+        if not penalties:
+            return 0.0
+        return min(sum(penalties) / len(penalties), 25.0)
 
     def _novelty_to_history(self, preview: EvaluationPreview) -> float:
         return self._novelty_to_history_spec(preview.spec)
