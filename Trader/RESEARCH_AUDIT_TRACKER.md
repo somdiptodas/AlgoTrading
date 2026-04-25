@@ -196,9 +196,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: planner grid output now emits `fixed_fraction` sizing variants at 0.25, 0.50, and 1.00 across enabled signal families. Existing evaluation, registry, queue, and frontier-neighborhood behavior remain unchanged, with generated specs validated through the registry.
   - Verification: `.venv/bin/pytest tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_research_queue.py -q` passes 27 tests; `.venv/bin/pytest -q` passes 96 tests. Verification subagent reported no blockers.
 
-- [ ] Add uniform risk-management exits.
+- [x] Add uniform risk-management exits.
   - Start with `stop_loss_bps` in `ExecConfig`.
   - Consider `take_profit_bps`, `max_hold_bars`, and trailing exits after stop-loss behavior is characterized.
+  - Completed 2026-04-25: added `ExecConfig.stop_loss_bps` with registry/backtest validation, reporting, serialization through existing spec payloads, and long-engine stop-loss exits. Stops use filled entry price, handle gap-through at the bar open, and preempt signal/session/final exits when triggered.
+  - Verification: `.venv/bin/pytest tests/test_costs.py tests/test_splits_metrics_registry.py tests/test_backtest_regression.py -q` passes 21 tests; `.venv/bin/pytest -q` passes 99 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Add real session-time controls.
   - First 30 minutes only.

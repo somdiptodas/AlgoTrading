@@ -35,6 +35,7 @@ class ExecConfig:
     slippage_bps: float = 1.0
     spread_bps: float = 0.0
     max_position_notional: float | None = None
+    stop_loss_bps: float | None = None
     regular_session_only: bool = True
     flat_at_close: bool = True
 

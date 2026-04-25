@@ -30,6 +30,19 @@ def _bar(index: int, price: float = 100.0, volume: float = 1_000.0) -> MarketBar
     )
 
 
+def _ohlc_bar(index: int, *, open_price: float, high: float, low: float, close: float) -> MarketBar:
+    timestamp = (datetime(2026, 1, 5, 9, 30, tzinfo=NEW_YORK) + timedelta(minutes=index)).astimezone(timezone.utc)
+    return MarketBar(
+        timestamp_ms=int(timestamp.timestamp() * 1000),
+        timestamp_utc=timestamp.isoformat(),
+        open=open_price,
+        high=high,
+        low=low,
+        close=close,
+        volume=1_000.0,
+    )
+
+
 def test_fill_costs_apply_per_share_commission_spread_and_notional_cap() -> None:
     config = ExecConfig(
         initial_cash=1_000.0,
@@ -51,6 +64,52 @@ def test_fill_costs_apply_per_share_commission_spread_and_notional_cap() -> None
 
     assert cash == pytest.approx(1_000.798)
     assert trade.cost_cash == pytest.approx(3.202)
+
+
+def test_stop_loss_exits_at_threshold_when_bar_low_crosses_stop() -> None:
+    config = ExecConfig(initial_cash=100_000.0, slippage_bps=0.0, stop_loss_bps=100.0)
+    bars = (
+        _ohlc_bar(0, open_price=100.0, high=100.0, low=100.0, close=100.0),
+        _ohlc_bar(1, open_price=100.0, high=101.0, low=99.5, close=100.5),
+        _ohlc_bar(2, open_price=101.0, high=101.0, low=98.5, close=100.0),
+    )
+
+    result = run_long_only_engine(bars, (True, True, True), config)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_reason == "stop_loss"
+    assert result.trades[0].exit_price == pytest.approx(99.0)
+
+
+def test_stop_loss_gap_through_exits_at_bar_open() -> None:
+    config = ExecConfig(initial_cash=100_000.0, slippage_bps=0.0, stop_loss_bps=100.0)
+    bars = (
+        _ohlc_bar(0, open_price=100.0, high=100.0, low=100.0, close=100.0),
+        _ohlc_bar(1, open_price=100.0, high=101.0, low=99.5, close=100.5),
+        _ohlc_bar(2, open_price=98.0, high=99.0, low=97.0, close=98.5),
+    )
+
+    result = run_long_only_engine(bars, (True, True, True), config)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_reason == "stop_loss"
+    assert result.trades[0].exit_price == pytest.approx(98.0)
+
+
+def test_stop_loss_preempts_pending_signal_exit_on_gap_through() -> None:
+    config = ExecConfig(initial_cash=100_000.0, slippage_bps=0.0, stop_loss_bps=100.0)
+    bars = (
+        _ohlc_bar(0, open_price=100.0, high=100.0, low=100.0, close=100.0),
+        _ohlc_bar(1, open_price=100.0, high=101.0, low=99.5, close=100.5),
+        _ohlc_bar(2, open_price=98.0, high=99.0, low=97.0, close=98.5),
+        _ohlc_bar(3, open_price=102.0, high=102.0, low=102.0, close=102.0),
+    )
+
+    result = run_long_only_engine(bars, (True, False, False, False), config)
+
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_reason == "stop_loss"
+    assert result.trades[0].exit_price == pytest.approx(98.0)
 
 
 def test_cost_drag_metrics_use_trade_cost_cash() -> None:
@@ -102,3 +161,5 @@ def test_registry_rejects_invalid_cost_config_values() -> None:
         REGISTRY.validate_spec(StrategySpec(name="bad_spread", exec_config=ExecConfig(spread_bps=-1.0)))
     with pytest.raises(ValueError, match="max_position_notional"):
         REGISTRY.validate_spec(StrategySpec(name="bad_notional", exec_config=ExecConfig(max_position_notional=0.0)))
+    with pytest.raises(ValueError, match="stop_loss_bps"):
+        REGISTRY.validate_spec(StrategySpec(name="bad_stop_loss", exec_config=ExecConfig(stop_loss_bps=0.0)))

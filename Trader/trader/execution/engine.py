@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from trader.data.models import MarketBar
-from trader.execution.fills import Trade, enter_long, exit_long
+from trader.execution.fills import Trade, enter_long, exit_long, exit_long_at_price
 from trader.execution.position import Position
 from trader.strategies.spec import ExecConfig
 
@@ -41,7 +41,11 @@ def run_long_only_engine(
             if action == "enter":
                 cash, position = enter_long(cash, bar, exec_config, sizing_fraction)
             elif action == "exit" and position is not None:
-                cash, trade = exit_long(cash, position, bar, exec_config, reason, fill_at_close=False)
+                stop_fill_reference = stop_loss_fill_reference(position, bar, exec_config)
+                if stop_fill_reference is not None:
+                    cash, trade = exit_long_at_price(cash, position, bar, exec_config, "stop_loss", stop_fill_reference)
+                else:
+                    cash, trade = exit_long(cash, position, bar, exec_config, reason, fill_at_close=False)
                 trades.append(trade)
                 position = None
             pending_action = None
@@ -52,6 +56,14 @@ def run_long_only_engine(
         regime_is_long = bool(regime_by_bar[index])
         last_bar = index == len(bars) - 1
         next_session_changes = (not last_bar) and bars[index + 1].session_date != bar.session_date
+
+        if position is not None and exec_config.stop_loss_bps is not None:
+            stop_fill_reference = stop_loss_fill_reference(position, bar, exec_config)
+            if stop_fill_reference is not None:
+                cash, trade = exit_long_at_price(cash, position, bar, exec_config, "stop_loss", stop_fill_reference)
+                trades.append(trade)
+                position = None
+                pending_action = None
 
         if position is not None and exec_config.flat_at_close and (next_session_changes or last_bar):
             cash, trade = exit_long(cash, position, bar, exec_config, "session_close", fill_at_close=True)
@@ -86,3 +98,12 @@ def mark_to_market(cash: float, position: Position | None, close_price: float) -
     if position is None:
         return cash
     return cash + (position.shares * close_price)
+
+
+def stop_loss_fill_reference(position: Position, bar: MarketBar, exec_config: ExecConfig) -> float | None:
+    if exec_config.stop_loss_bps is None:
+        return None
+    stop_price = position.entry_price * (1.0 - exec_config.stop_loss_bps / 10_000.0)
+    if bar.low > stop_price:
+        return None
+    return bar.open if bar.open <= stop_price else stop_price

@@ -61,6 +61,17 @@ def exit_long(
     fill_at_close: bool,
 ) -> tuple[float, Trade]:
     raw_price = bar.close if fill_at_close else bar.open
+    return exit_long_at_price(cash, position, bar, exec_config, reason, raw_price)
+
+
+def exit_long_at_price(
+    cash: float,
+    position: Position,
+    bar: MarketBar,
+    exec_config: ExecConfig,
+    reason: str,
+    raw_price: float,
+) -> tuple[float, Trade]:
     exit_bps = exec_config.slippage_bps + (exec_config.spread_bps / 2.0)
     fill_price = raw_price * (1.0 - exit_bps / 10_000.0)
     exit_commission = exec_config.commission_per_order + (position.shares * exec_config.commission_per_share)

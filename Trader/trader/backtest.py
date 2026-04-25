@@ -33,6 +33,7 @@ class BacktestRequest:
     slippage_bps: float
     spread_bps: float
     max_position_notional: float | None
+    stop_loss_bps: float | None
     fast_length: int
     slow_length: int
     signal_buffer_bps: float
@@ -58,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slippage-bps", type=float, default=1.0)
     parser.add_argument("--spread-bps", type=float, default=0.0)
     parser.add_argument("--max-position-notional", type=float)
+    parser.add_argument("--stop-loss-bps", type=float)
     parser.add_argument("--fast-length", type=int, default=20)
     parser.add_argument("--slow-length", type=int, default=80)
     parser.add_argument("--signal-buffer-bps", type=float, default=0.0)
@@ -86,6 +88,8 @@ def parse_args(argv: list[str] | None = None) -> BacktestRequest:
         raise ValueError("--spread-bps must be >= 0")
     if args.max_position_notional is not None and args.max_position_notional <= 0:
         raise ValueError("--max-position-notional must be > 0 when set")
+    if args.stop_loss_bps is not None and args.stop_loss_bps <= 0:
+        raise ValueError("--stop-loss-bps must be > 0 when set")
     if args.signal_buffer_bps < 0:
         raise ValueError("--signal-buffer-bps must be >= 0")
     start = _parse_datetime(args.start) if args.start else None
@@ -106,6 +110,7 @@ def parse_args(argv: list[str] | None = None) -> BacktestRequest:
         slippage_bps=args.slippage_bps,
         spread_bps=args.spread_bps,
         max_position_notional=args.max_position_notional,
+        stop_loss_bps=args.stop_loss_bps,
         fast_length=args.fast_length,
         slow_length=args.slow_length,
         signal_buffer_bps=args.signal_buffer_bps,
@@ -138,6 +143,7 @@ def run_backtest(request: BacktestRequest) -> BacktestResult:
             slippage_bps=request.slippage_bps,
             spread_bps=request.spread_bps,
             max_position_notional=request.max_position_notional,
+            stop_loss_bps=request.stop_loss_bps,
             regular_session_only=request.regular_session_only,
             flat_at_close=request.flat_at_close,
         ),
@@ -200,7 +206,7 @@ def _print_summary(result: BacktestResult, request: BacktestRequest) -> None:
     print(
         f"Parameters: fast={request.fast_length} slow={request.slow_length} "
         f"buffer_bps={request.signal_buffer_bps:.2f} slippage_bps={request.slippage_bps:.2f} "
-        f"spread_bps={request.spread_bps:.2f}"
+        f"spread_bps={request.spread_bps:.2f} stop_loss_bps={request.stop_loss_bps}"
     )
     print(
         f"Equity: start=${result.initial_cash:,.2f} end=${result.final_cash:,.2f} "
