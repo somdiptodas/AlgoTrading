@@ -259,7 +259,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: `EvaluationRunner` now caches fixed fold baselines per snapshot, fold window, and cost model while keeping `randomized_entry_same_exposure` per spec; fold-result caching is also snapshot-scoped to avoid stale reuse.
   - Verification: focused baseline/runner tests passed (`.venv/bin/pytest -q tests/test_baselines.py tests/test_data_quality.py tests/test_robustness.py tests/test_costs.py tests/test_research_queue.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
-- [ ] **Per-(snapshot, fold) indicator cache** (S3). EMA/RSI/rolling-high/rolling-low keyed by `(snapshot_id, fold_range, feature, params)`. Targets the biggest hit-rate when grids share lookback values.
+- [x] **Per-(snapshot, fold) indicator cache** (S3). EMA/RSI/rolling-high/rolling-low keyed by `(snapshot_id, fold_range, feature, params)`. Targets the biggest hit-rate when grids share lookback values.
+  - Completed: 2026-04-25
+  - Implementation: `EvaluationRunner` now owns a fold-scoped indicator cache used by `FeaturePipeline` for EMA, RSI, rolling-high, and rolling-low test slices; cached values are immutable internally and scoped by snapshot plus fold train/test window.
+  - Verification: focused indicator/leakage/runner tests passed (`.venv/bin/pytest -q tests/test_indicator_cache.py tests/test_leakage.py tests/test_robustness.py tests/test_costs.py tests/test_baselines.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
 - [ ] **Cap planner overplan factor at 4** once stage-A exists (S8). Reduce wasted preview/eval-key compute.
 - [ ] **Add `delta_exposure_adjusted_buy_and_hold_pct` and use it as the candidate gate** (V1). The current `delta_buy_and_hold > 0.5` is structurally unwinnable for low-exposure strategies in a bull market. This is the *single biggest reason* nothing has promoted.
 - [ ] **Fix vwap_deviation churn** (G10). Add `min_bars_between_entries` (cooldown) and `max_entries_per_session` to the signal params; default cooldown 30 bars, max 4 entries/day.

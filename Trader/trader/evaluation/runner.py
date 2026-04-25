@@ -23,6 +23,7 @@ from trader.evaluation.promotion import promotion_stage
 from trader.evaluation.robustness import RobustnessResult, assess_robustness
 from trader.evaluation.splits import Fold, build_walk_forward_folds
 from trader.execution.engine import BacktestResult, run_long_only_engine
+from trader.features.pipeline import FeatureCache, feature_cache_context
 from trader.strategies.registry import StrategyRegistry
 from trader.strategies.spec import StrategySpec
 
@@ -84,8 +85,9 @@ class EvaluationRunner:
         self.registry = registry
         self._data_slice_cache: dict[tuple[object, ...], DataSlice] = {}
         self._split_cache: dict[tuple[str, int, int, int], tuple[str, tuple[Fold, ...]]] = {}
-        self._fold_result_cache: dict[tuple[str, str, str, str, int], FoldResult] = {}
+        self._fold_result_cache: dict[tuple[object, ...], FoldResult] = {}
         self._baseline_cache: dict[tuple[object, ...], dict[str, dict[str, float]]] = {}
+        self._indicator_cache: FeatureCache = {}
 
     def evaluate_single_window(
         self,
@@ -191,7 +193,13 @@ class EvaluationRunner:
         stage = promotion_stage(aggregate_metrics, robustness.checks)
         if stage != "exploratory":
             fold_results = tuple(
-                self._add_cost_scenario_metrics(preview.spec, fold, preview.data_slice.bars, fold_result)
+                self._add_cost_scenario_metrics(
+                    preview.spec,
+                    fold,
+                    preview.data_slice.bars,
+                    fold_result,
+                    data_snapshot_id=preview.data_slice.snapshot_id,
+                )
                 for fold, fold_result in zip(preview.folds, fold_results)
             )
             aggregate_metrics = self._aggregate_fold_results(fold_results)
@@ -301,16 +309,28 @@ class EvaluationRunner:
         if not preview.folds:
             return None
         fold = preview.folds[-1]
-        fold_result = self._evaluate_fast_fold(preview.spec, fold, preview.data_slice.bars)
+        fold_result = self._evaluate_fast_fold(
+            preview.spec,
+            fold,
+            preview.data_slice.bars,
+            data_snapshot_id=preview.data_slice.snapshot_id,
+        )
         metrics = dict(fold_result.metrics)
         metrics["annualized_sharpe"] = annualized_sharpe_for_backtests((fold_result.backtest,))
         return fold_result, metrics
 
-    def _evaluate_fast_fold(self, spec: StrategySpec, fold: Fold, bars: tuple[MarketBar, ...]) -> FoldResult:
+    def _evaluate_fast_fold(
+        self,
+        spec: StrategySpec,
+        fold: Fold,
+        bars: tuple[MarketBar, ...],
+        *,
+        data_snapshot_id: str | None = None,
+    ) -> FoldResult:
         train_bars = tuple(bars[fold.train_start_idx : fold.train_end_idx + 1])
         test_bars = tuple(bars[fold.test_start_idx : fold.test_end_idx + 1])
         warnings = self._quality_warnings(spec, test_bars)
-        regime = self.registry.generate_regime(spec, train_bars, test_bars)
+        regime = self._generate_fold_regime(spec, fold, train_bars, test_bars, data_snapshot_id=data_snapshot_id)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
@@ -363,7 +383,7 @@ class EvaluationRunner:
         train_bars = tuple(bars[fold.train_start_idx : fold.train_end_idx + 1])
         test_bars = tuple(bars[fold.test_start_idx : fold.test_end_idx + 1])
         warnings = self._quality_warnings(spec, test_bars)
-        regime = self.registry.generate_regime(spec, train_bars, test_bars)
+        regime = self._generate_fold_regime(spec, fold, train_bars, test_bars, data_snapshot_id=data_snapshot_id)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
@@ -388,6 +408,30 @@ class EvaluationRunner:
         )
         self._fold_result_cache[cache_key] = fold_result
         return fold_result
+
+    def _generate_fold_regime(
+        self,
+        spec: StrategySpec,
+        fold: Fold,
+        train_bars: tuple[MarketBar, ...],
+        test_bars: tuple[MarketBar, ...],
+        *,
+        data_snapshot_id: str | None = None,
+    ) -> list[bool]:
+        if not hasattr(self, "_indicator_cache"):
+            self._indicator_cache = {}
+        scope = (
+            data_snapshot_id,
+            fold.fold_id,
+            fold.train_start_utc,
+            fold.train_end_utc,
+            fold.test_start_utc,
+            fold.test_end_utc,
+            len(train_bars),
+            len(test_bars),
+        )
+        with feature_cache_context(self._indicator_cache, scope):
+            return self.registry.generate_regime(spec, train_bars, test_bars)
 
     def _evaluate_baselines(
         self,
@@ -449,10 +493,12 @@ class EvaluationRunner:
         fold: Fold,
         bars: tuple[MarketBar, ...],
         fold_result: FoldResult,
+        *,
+        data_snapshot_id: str | None = None,
     ) -> FoldResult:
         train_bars = tuple(bars[fold.train_start_idx : fold.train_end_idx + 1])
         test_bars = tuple(bars[fold.test_start_idx : fold.test_end_idx + 1])
-        regime = self.registry.generate_regime(spec, train_bars, test_bars)
+        regime = self._generate_fold_regime(spec, fold, train_bars, test_bars, data_snapshot_id=data_snapshot_id)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         metrics = dict(fold_result.metrics)
         metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
@@ -462,7 +508,19 @@ class EvaluationRunner:
         train_bars = preview.data_slice.bars
         test_bars = preview.holdout_bars
         warnings = self._quality_warnings(spec, test_bars)
-        regime = self.registry.generate_regime(spec, train_bars, test_bars)
+        if not hasattr(self, "_indicator_cache"):
+            self._indicator_cache = {}
+        scope = (
+            preview.data_slice.snapshot_id,
+            preview.holdout_snapshot_id,
+            "holdout",
+            test_bars[0].timestamp_utc,
+            test_bars[-1].timestamp_utc,
+            len(train_bars),
+            len(test_bars),
+        )
+        with feature_cache_context(self._indicator_cache, scope):
+            regime = self.registry.generate_regime(spec, train_bars, test_bars)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
