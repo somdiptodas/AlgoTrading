@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Iterable, Sequence
 
 from trader.evaluation.runner import EvaluationPreview, EvaluationRunner
@@ -59,21 +60,28 @@ class DeterministicCandidateQueue:
         embargo_bars: int,
         locked_holdout_months: int | None = None,
         max_preview_count: int | None = None,
+        timings: dict[str, float] | None = None,
     ) -> CandidateQueueResult:
         candidates: list[ScoredCandidate] = []
         suppression_records: list[SuppressedSpec] = []
         previewed_count = 0
         duplicate_count = 0
         queued_evaluation_keys: set[str] = set()
-        for planned in self._cheap_rank_plans(planned_specs, runner):
+        started = perf_counter()
+        ranked_plans = self._cheap_rank_plans(planned_specs, runner)
+        _add_timing(timings, "queue_scoring", started)
+        for planned in ranked_plans:
             try:
+                started = perf_counter()
                 evaluation_key = runner.evaluation_key_for_spec(
                     planned.spec,
                     num_folds=num_folds,
                     embargo_bars=embargo_bars,
                     locked_holdout_months=locked_holdout_months,
                 )
+                _add_timing(timings, "key_compute", started)
             except Exception:
+                _add_timing(timings, "key_compute", started)
                 continue
             if evaluation_key in self._historical_eval_keys:
                 duplicate_count += 1
@@ -85,15 +93,19 @@ class DeterministicCandidateQueue:
             if max_preview_count is not None and previewed_count >= max_preview_count:
                 continue
             try:
+                started = perf_counter()
                 preview = runner.preview_walk_forward(
                     planned.spec,
                     num_folds=num_folds,
                     embargo_bars=embargo_bars,
                     locked_holdout_months=locked_holdout_months,
                 )
+                _add_timing(timings, "preview", started)
             except Exception:
+                _add_timing(timings, "preview", started)
                 continue
             previewed_count += 1
+            started = perf_counter()
             family = preview.spec.signal.name
             novelty = self._novelty_to_history(preview)
             parent_score = self._parent_score(planned)
@@ -117,8 +129,12 @@ class DeterministicCandidateQueue:
                     suppression_record=suppression_record,
                 )
             )
+            _add_timing(timings, "queue_scoring", started)
+        started = perf_counter()
+        selected = self._select_candidates(candidates)
+        _add_timing(timings, "queue_scoring", started)
         return CandidateQueueResult(
-            selected=self._select_candidates(candidates),
+            selected=selected,
             previewed_count=previewed_count,
             duplicate_count=duplicate_count,
             suppression_records=tuple(suppression_records),
@@ -308,3 +324,8 @@ class DeterministicCandidateQueue:
     def _spec_distance(left: dict[str, object], right: dict[str, object]) -> float:
         """Thin wrapper kept for internal call-sites; delegates to shared function."""
         return spec_distance(left, right)
+
+
+def _add_timing(timings: dict[str, float] | None, phase: str, started: float) -> None:
+    if timings is not None:
+        timings[phase] = timings.get(phase, 0.0) + (perf_counter() - started)

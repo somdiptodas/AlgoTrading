@@ -4,6 +4,7 @@ from calendar import monthrange
 from dataclasses import dataclass, replace
 from datetime import datetime, time
 from hashlib import sha256
+from time import perf_counter
 from typing import Sequence
 
 from trader.data.models import MarketBar
@@ -88,6 +89,7 @@ class EvaluationRunner:
         self._fold_result_cache: dict[tuple[object, ...], FoldResult] = {}
         self._baseline_cache: dict[tuple[object, ...], dict[str, dict[str, float]]] = {}
         self._indicator_cache: FeatureCache = {}
+        self.phase_timings: dict[str, float] = {}
 
     def evaluate_single_window(
         self,
@@ -145,7 +147,11 @@ class EvaluationRunner:
         experiment_id: str | None = None,
     ) -> ExperimentResult:
         experiment_id = experiment_id or sha256(preview.evaluation_key.encode("utf-8")).hexdigest()[:16]
-        stage_a = self._evaluate_stage_a(preview) if include_robustness else None
+        stage_a = None
+        if include_robustness:
+            started = perf_counter()
+            stage_a = self._evaluate_stage_a(preview)
+            self._add_phase_timing("stage_a", started)
         if stage_a is not None:
             stage_a_fold, stage_a_metrics = stage_a
             reject_reasons = self._stage_a_reject_reasons(stage_a_metrics)
@@ -171,10 +177,22 @@ class EvaluationRunner:
                     holdout_result=None,
                 )
 
+        started = perf_counter()
         fold_results, aggregate_metrics = self._evaluate_preview_folds(preview.spec, preview)
+        self._add_phase_timing("stage_b", started)
         aggregate_metrics = dict(aggregate_metrics)
         if stage_a is not None:
             aggregate_metrics["stage_a_pass"] = 1.0
+        def neighbor_metric_fn(neighbor_spec: StrategySpec) -> dict[str, float]:
+            started = perf_counter()
+            try:
+                return self._evaluate_preview_folds(
+                    neighbor_spec,
+                    preview,
+                )[1]
+            finally:
+                self._add_phase_timing("robustness_neighbors", started)
+
         robustness = (
             assess_robustness(
                 spec=preview.spec,
@@ -182,16 +200,14 @@ class EvaluationRunner:
                 fold_metrics=[fold.metrics for fold in fold_results],
                 fold_backtests=[fold.backtest for fold in fold_results],
                 registry=self.registry,
-                neighbor_metric_fn=lambda neighbor_spec: self._evaluate_preview_folds(
-                    neighbor_spec,
-                    preview,
-                )[1],
+                neighbor_metric_fn=neighbor_metric_fn,
             )
             if include_robustness
             else RobustnessResult(checks={}, passed=False)
         )
         stage = promotion_stage(aggregate_metrics, robustness.checks)
         if stage != "exploratory":
+            started = perf_counter()
             fold_results = tuple(
                 self._add_cost_scenario_metrics(
                     preview.spec,
@@ -205,11 +221,12 @@ class EvaluationRunner:
             aggregate_metrics = self._aggregate_fold_results(fold_results)
             if stage_a is not None:
                 aggregate_metrics["stage_a_pass"] = 1.0
-        holdout_result = (
-            self._evaluate_holdout(preview.spec, preview)
-            if stage in _HOLDOUT_STAGES and preview.holdout_bars
-            else None
-        )
+            self._add_phase_timing("stage_b", started)
+        holdout_result = None
+        if stage in _HOLDOUT_STAGES and preview.holdout_bars:
+            started = perf_counter()
+            holdout_result = self._evaluate_holdout(preview.spec, preview)
+            self._add_phase_timing("stage_b", started)
         return ExperimentResult(
             experiment_id=experiment_id,
             status="completed",
@@ -224,6 +241,11 @@ class EvaluationRunner:
             promotion_stage=stage,
             holdout_result=holdout_result,
         )
+
+    def _add_phase_timing(self, phase: str, started: float) -> None:
+        if not hasattr(self, "phase_timings"):
+            self.phase_timings = {}
+        self.phase_timings[phase] = self.phase_timings.get(phase, 0.0) + (perf_counter() - started)
 
     def preview_walk_forward(
         self,

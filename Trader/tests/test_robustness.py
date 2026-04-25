@@ -282,6 +282,7 @@ def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypat
     assert neighbor_fold_ids == ["fold_1", "fold_2", "fold_3"]
     assert captured_neighbor_metrics["return_pct"] == 3.8
     assert captured_neighbor_metrics["sharpe_like"] == 0.38
+    assert {"stage_a", "stage_b", "robustness_neighbors"} <= set(runner.phase_timings)
 
 
 def test_evaluate_preview_stage_a_rejects_before_stage_b_and_robustness(monkeypatch) -> None:
@@ -345,6 +346,9 @@ def test_evaluate_preview_stage_a_rejects_before_stage_b_and_robustness(monkeypa
         "stage_a_pass": False,
         "stage_a_reject_non_positive_return": True,
     }
+    assert "stage_a" in runner.phase_timings
+    assert "stage_b" not in runner.phase_timings
+    assert "robustness_neighbors" not in runner.phase_timings
 
 
 def test_evaluate_preview_runs_stage_b_when_stage_a_passes(monkeypatch) -> None:

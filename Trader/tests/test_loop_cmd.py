@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS
-from trader.cli.loop_cmd import _max_preview_count, _planned_spec_count, _suppression_audit_types
+from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES
+from trader.cli.loop_cmd import _add_timing, _max_preview_count, _new_timings, _planned_spec_count, _suppression_audit_types, _timing_payload
 from trader.research.suppressor import SuppressedSpec
 
 
@@ -26,3 +26,15 @@ def test_suppression_audit_types_separate_evaluated_from_discarded() -> None:
         "evaluated_hash": "evaluated",
         "discarded_hash": "preview_discarded",
     }
+
+
+def test_timing_payload_includes_all_loop_phases(monkeypatch) -> None:
+    timings = _new_timings()
+    monkeypatch.setattr("trader.cli.loop_cmd.perf_counter", lambda: 1.1234567)
+
+    _add_timing(timings, "planning", 1.0)
+    payload = _timing_payload(timings)
+
+    assert tuple(payload) == TIMING_PHASES
+    assert payload["planning"] == 0.123457
+    assert payload["stage_a"] == 0.0

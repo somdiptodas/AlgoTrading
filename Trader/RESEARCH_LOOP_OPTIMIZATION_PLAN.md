@@ -275,7 +275,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: `vwap_deviation` now normalizes and emits explicit churn-control params, enforces cooldown after exits, caps signal entries per session, resets state on session changes, and preserves cooldown/cap through planner grids and neighbors.
   - Verification: focused VWAP/planner/leakage tests passed (`.venv/bin/pytest -q tests/test_vwap_deviation.py tests/test_planner.py tests/test_leakage.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
-- [ ] **Add per-phase timing JSON** to loop output (rev 1 P0 carryover): planning, key compute, preview, queue scoring, stage A, stage B, robustness neighbors, artifact write, ledger write.
+- [x] **Add per-phase timing JSON** to loop output (rev 1 P0 carryover): planning, key compute, preview, queue scoring, stage A, stage B, robustness neighbors, artifact write, ledger write.
+  - Completed: 2026-04-25
+  - Implementation: loop output now includes `timings_sec` with stable phase keys for planning, evaluation-key compute, preview, queue scoring, Stage A, Stage B, robustness neighbors, artifact writes, and ledger writes.
+  - Verification: focused timing/queue/runner tests passed (`.venv/bin/pytest -q tests/test_loop_cmd.py tests/test_research_queue.py tests/test_robustness.py tests/test_costs.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
 
 ### P1 — make the loop a real ensemble factory
 

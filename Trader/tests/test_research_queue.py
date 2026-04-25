@@ -89,6 +89,7 @@ def test_candidate_queue_skips_existing_evaluation_keys_before_preview(tmp_path:
         history_entries=ledger.list_completed(limit=100),
         frontier_entries=ledger.top_experiments(limit=10),
     )
+    timings: dict[str, float] = {}
     preview_calls = 0
     original_preview = runner.preview_walk_forward
 
@@ -109,6 +110,7 @@ def test_candidate_queue_skips_existing_evaluation_keys_before_preview(tmp_path:
         runner=runner,
         num_folds=3,
         embargo_bars=1,
+        timings=timings,
     )
 
     assert queue_result.duplicate_count == 1
@@ -116,6 +118,7 @@ def test_candidate_queue_skips_existing_evaluation_keys_before_preview(tmp_path:
     assert preview_calls == 1
     assert len(queue_result.selected) == 1
     assert queue_result.selected[0].preview.spec.name == "ema_new"
+    assert {"key_compute", "preview", "queue_scoring"} <= set(timings)
 
 
 def test_candidate_queue_counts_same_batch_duplicates_before_preview(tmp_path: Path, monkeypatch) -> None:

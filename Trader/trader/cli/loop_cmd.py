@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 from hashlib import sha256
+from time import perf_counter
 
 from trader.artifacts.store import ArtifactStore
 from trader.config import load_settings
@@ -23,6 +24,17 @@ _ALL_SIGNAL_FAMILIES = ("ema_cross", "breakout", "rsi_reversion", "vwap_deviatio
 DEFAULT_OVERPLAN_FACTOR = 4
 DEFAULT_PREVIEW_FACTOR = 4
 MIN_PLANNED_SPECS = 64
+TIMING_PHASES = (
+    "planning",
+    "key_compute",
+    "preview",
+    "queue_scoring",
+    "stage_a",
+    "stage_b",
+    "robustness_neighbors",
+    "artifact_write",
+    "ledger_write",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -95,8 +107,21 @@ def _suppression_audit_types(
     }
 
 
+def _new_timings() -> dict[str, float]:
+    return {phase: 0.0 for phase in TIMING_PHASES}
+
+
+def _add_timing(timings: dict[str, float], phase: str, started: float) -> None:
+    timings[phase] = timings.get(phase, 0.0) + (perf_counter() - started)
+
+
+def _timing_payload(timings: dict[str, float]) -> dict[str, float]:
+    return {phase: round(timings.get(phase, 0.0), 6) for phase in TIMING_PHASES}
+
+
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    timings = _new_timings()
     settings = load_settings(database_path=args.database)
     ledger = LedgerStore(settings.ledger_path)
     ledger.initialize()
@@ -121,6 +146,7 @@ def main(argv: list[str] | None = None) -> None:
 
     signal_families = tuple(args.signal_family) if args.signal_family else _ALL_SIGNAL_FAMILIES
     frontier_specs = tuple((entry.experiment_id, entry.spec) for entry in frontier_entries)
+    started = perf_counter()
     planned = planner.plan(
         batch_size=_planned_spec_count(args.batch_size, args.overplan_factor),
         frontier_specs=frontier_specs,
@@ -131,6 +157,7 @@ def main(argv: list[str] | None = None) -> None:
         seen_evaluation_key=lambda spec: False,
         evaluation_key_for_spec=lambda spec: spec.spec_hash(),
     )
+    _add_timing(timings, "planning", started)
     candidate_queue = DeterministicCandidateQueue(
         history_entries=history_entries,
         frontier_entries=frontier_entries,
@@ -143,21 +170,28 @@ def main(argv: list[str] | None = None) -> None:
         embargo_bars=args.embargo_bars,
         locked_holdout_months=args.holdout_months,
         max_preview_count=_max_preview_count(args.batch_size, args.preview_factor),
+        timings=timings,
     )
 
     completed = []
     reused = queue_result.duplicate_count
     selected_candidates = queue_result.selected[: args.batch_size]
     for candidate in selected_candidates:
+        before_eval_timings = dict(runner.phase_timings)
         result = runner.evaluate_preview(candidate.preview, include_robustness=True)
+        for phase in ("stage_a", "stage_b", "robustness_neighbors"):
+            timings[phase] += runner.phase_timings.get(phase, 0.0) - before_eval_timings.get(phase, 0.0)
         critique = critic.critique(result)
         report_markdown = render_experiment_report(result, critique=critique.to_payload())
+        started = perf_counter()
         artifact_paths = artifacts.write_experiment(
             result,
             report_markdown=report_markdown,
             critique=critique.to_payload(),
             generator_kind=candidate.planned.generator_kind,
         )
+        _add_timing(timings, "artifact_write", started)
+        started = perf_counter()
         ledger.record_result(
             result,
             artifact_paths=artifact_paths,
@@ -165,16 +199,19 @@ def main(argv: list[str] | None = None) -> None:
             parent_experiment_ids=candidate.planned.parent_experiment_ids,
             critique=critique.to_payload(),
         )
+        _add_timing(timings, "ledger_write", started)
         completed.append(result)
 
     # --- Persist suppression audit records to the ledger ---
     evaluated_spec_hashes = {result.spec_hash for result in completed}
     audit_type_by_spec_hash = _suppression_audit_types(queue_result.suppression_records, evaluated_spec_hashes)
+    started = perf_counter()
     suppression_logged = ledger.log_suppression_batch(
         loop_run_id,
         queue_result.suppression_records,
         audit_type_by_spec_hash=audit_type_by_spec_hash,
     )
+    _add_timing(timings, "ledger_write", started)
     suppression_summary = ledger.suppression_summary(loop_run_id) if suppression_logged > 0 else {}
 
     frontier = frontier_manager.rank([entry.to_result() for entry in ledger.top_experiments(limit=args.frontier_limit)])
@@ -199,6 +236,7 @@ def main(argv: list[str] | None = None) -> None:
                 ),
             },
             "rejected": list(generated.rejected),
+            "timings_sec": _timing_payload(timings),
             "suppressor": {
                 **suppressor.summary(),
                 "candidates_suppressed": suppression_logged,
