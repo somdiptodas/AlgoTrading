@@ -225,7 +225,10 @@ class EvaluationRunner:
         preview: EvaluationPreview,
     ) -> tuple[tuple[FoldResult, ...], dict[str, float]]:
         fold_results = tuple(self._evaluate_fold(spec, fold, preview.data_slice.bars) for fold in preview.folds)
-        aggregate_metrics = aggregate_metric_dicts([fold.metrics | fold.baseline_deltas for fold in fold_results])
+        aggregate_metrics = aggregate_metric_dicts(
+            [fold.metrics | fold.baseline_deltas for fold in fold_results],
+            weights=[len(fold.backtest.bars) for fold in fold_results],
+        )
         return fold_results, aggregate_metrics
 
     def evaluation_key(

@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trader.data.models import MarketBar
-from trader.evaluation.metrics import calculate_metrics
+from trader.evaluation.metrics import aggregate_metric_dicts, calculate_metrics
 from trader.evaluation.splits import build_walk_forward_folds
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
@@ -64,6 +64,19 @@ def test_metrics_on_known_trade_series() -> None:
     assert metrics["trade_count"] == 2.0
     assert metrics["win_rate_pct"] == 50.0
     assert metrics["max_drawdown_pct"] >= 0.0
+
+
+def test_aggregate_metrics_weights_by_fold_size() -> None:
+    metrics = aggregate_metric_dicts(
+        (
+            {"return_pct": 1.0, "sharpe_like": 0.1},
+            {"return_pct": 5.0, "sharpe_like": 0.5},
+        ),
+        weights=(10, 30),
+    )
+
+    assert metrics["return_pct"] == 4.0
+    assert metrics["sharpe_like"] == 0.4
 
 
 def test_strategy_hash_is_stable() -> None:

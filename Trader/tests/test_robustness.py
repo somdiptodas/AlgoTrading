@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+from trader.data.models import MarketBar
 from trader.data.view import DataSlice
 from trader.evaluation.robustness import RobustnessResult, _monthly_strategy_pnl_breakdown, assess_robustness
 from trader.evaluation.runner import EvaluationPreview, EvaluationRunner, FoldResult
@@ -29,10 +32,29 @@ def _trade(exit_timestamp_utc: str, pnl_cash: float) -> Trade:
     )
 
 
-def _backtest(trades: tuple[Trade, ...]) -> BacktestResult:
+def _bars(count: int) -> tuple[MarketBar, ...]:
+    start = datetime(2026, 1, 1, 14, 30, tzinfo=timezone.utc)
+    bars = []
+    for index in range(count):
+        timestamp = start + timedelta(minutes=index)
+        bars.append(
+            MarketBar(
+                timestamp_ms=int(timestamp.timestamp() * 1000),
+                timestamp_utc=timestamp.isoformat(),
+                open=100.0,
+                high=101.0,
+                low=99.0,
+                close=100.0,
+                volume=1_000.0,
+            )
+        )
+    return tuple(bars)
+
+
+def _backtest(trades: tuple[Trade, ...], bar_count: int = 1) -> BacktestResult:
     final_cash = 100_000.0 + sum(trade.pnl_cash for trade in trades)
     return BacktestResult(
-        bars=tuple(),
+        bars=_bars(bar_count),
         trades=trades,
         equity_curve=(100_000.0, final_cash),
         initial_cash=100_000.0,
@@ -144,6 +166,7 @@ def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypat
     runner._fold_result_cache = {}
     folds = (_fold("fold_1"), _fold("fold_2"), _fold("fold_3"))
     fold_returns = {"fold_1": 1.0, "fold_2": 3.0, "fold_3": 5.0}
+    fold_bar_counts = {"fold_1": 10, "fold_2": 10, "fold_3": 30}
     neighbor_fold_ids: list[str] = []
     captured_neighbor_metrics: dict[str, float] = {}
 
@@ -186,7 +209,7 @@ def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypat
             baseline_metrics={},
             baseline_deltas={},
             warnings=tuple(),
-            backtest=_backtest(tuple()),
+            backtest=_backtest(tuple(), bar_count=fold_bar_counts[fold.fold_id]),
         )
 
     def fake_assess_robustness(*, neighbor_metric_fn, registry, spec, **kwargs) -> RobustnessResult:
@@ -208,5 +231,5 @@ def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypat
     runner.evaluate_preview(preview)
 
     assert neighbor_fold_ids == ["fold_1", "fold_2", "fold_3"]
-    assert captured_neighbor_metrics["return_pct"] == 3.0
-    assert captured_neighbor_metrics["sharpe_like"] == 0.3
+    assert captured_neighbor_metrics["return_pct"] == 3.8
+    assert captured_neighbor_metrics["sharpe_like"] == 0.38

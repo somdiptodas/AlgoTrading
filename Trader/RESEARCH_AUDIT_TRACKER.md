@@ -63,9 +63,12 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Regression coverage: added a runner-level test proving neighbor metrics are collected from every fold and aggregated instead of using only fold 1.
   - Verification: `.venv/bin/pytest tests/test_robustness.py -q` passes 6 tests; `.venv/bin/pytest -q` passes 19 tests.
 
-- [ ] Replace unweighted fold aggregation.
+- [x] Replace unweighted fold aggregation.
   - Prefer combined out-of-sample equity metrics.
   - If metrics must be averaged, weight by test bar count or elapsed session count.
+  - Completed 2026-04-25: `aggregate_metric_dicts` now accepts explicit non-negative weights and `EvaluationRunner._evaluate_preview_folds` weights aggregate fold metrics and baseline deltas by each fold's out-of-sample bar count. This same path is used for robustness neighbor aggregation.
+  - Regression coverage: added direct weighted aggregation coverage and updated the robustness neighbor test so unequal fold bar counts produce weighted aggregate neighbor metrics.
+  - Verification: `.venv/bin/pytest tests/test_splits_metrics_registry.py tests/test_robustness.py -q` passes 11 tests.
 
 - [ ] Fix non-standard JSON values.
   - Replace `Infinity`, `-Infinity`, and `NaN` serialization with `null` or bounded sentinel values.

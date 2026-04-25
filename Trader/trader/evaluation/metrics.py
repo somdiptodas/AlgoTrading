@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from statistics import mean
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
@@ -26,11 +26,28 @@ def calculate_metrics(result: BacktestResult) -> dict[str, float]:
     }
 
 
-def aggregate_metric_dicts(metrics: Sequence[dict[str, float]]) -> dict[str, float]:
+def aggregate_metric_dicts(
+    metrics: Sequence[dict[str, float]],
+    *,
+    weights: Sequence[float] | None = None,
+) -> dict[str, float]:
     if not metrics:
         return {}
+    if weights is None:
+        weights = tuple(1.0 for _ in metrics)
+    if len(weights) != len(metrics):
+        raise ValueError("weights must have the same length as metrics")
+    if any(weight < 0 for weight in weights):
+        raise ValueError("weights must be non-negative")
+
+    total_weight = sum(weights)
+    if math.isclose(total_weight, 0.0):
+        raise ValueError("weights must include at least one positive value")
     keys = sorted({key for metric in metrics for key in metric})
-    return {key: mean([metric[key] for metric in metrics]) for key in keys}
+    return {
+        key: sum(metric[key] * weight for metric, weight in zip(metrics, weights)) / total_weight
+        for key in keys
+    }
 
 
 def max_drawdown_pct(equity_curve: Sequence[float]) -> float:
