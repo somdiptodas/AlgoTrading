@@ -60,6 +60,21 @@ class DeterministicCandidateQueue:
         queued_evaluation_keys: set[str] = set()
         for planned in planned_specs:
             try:
+                evaluation_key = runner.evaluation_key_for_spec(
+                    planned.spec,
+                    num_folds=num_folds,
+                    embargo_bars=embargo_bars,
+                    locked_holdout_months=locked_holdout_months,
+                )
+            except Exception:
+                continue
+            if evaluation_key in self._historical_eval_keys:
+                duplicate_count += 1
+                continue
+            if evaluation_key in queued_evaluation_keys:
+                duplicate_count += 1
+                continue
+            try:
                 preview = runner.preview_walk_forward(
                     planned.spec,
                     num_folds=num_folds,
@@ -69,13 +84,7 @@ class DeterministicCandidateQueue:
             except Exception:
                 continue
             previewed_count += 1
-            if preview.evaluation_key in self._historical_eval_keys:
-                duplicate_count += 1
-                continue
-            if preview.evaluation_key in queued_evaluation_keys:
-                duplicate_count += 1
-                continue
-            queued_evaluation_keys.add(preview.evaluation_key)
+            queued_evaluation_keys.add(evaluation_key)
             family = preview.spec.signal.name
             novelty = self._novelty_to_history(preview)
             parent_score = self._parent_score(planned)

@@ -69,7 +69,7 @@ def _spec(name: str, signal_name: str, params: dict[str, int | float]) -> Strate
     )
 
 
-def test_candidate_queue_skips_existing_evaluation_keys(tmp_path: Path) -> None:
+def test_candidate_queue_skips_existing_evaluation_keys_before_preview(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "market.db"
     _seed_db(db_path)
     runner = EvaluationRunner(DataView(db_path), REGISTRY)
@@ -88,6 +88,15 @@ def test_candidate_queue_skips_existing_evaluation_keys(tmp_path: Path) -> None:
         history_entries=ledger.list_completed(limit=100),
         frontier_entries=ledger.top_experiments(limit=10),
     )
+    preview_calls = 0
+    original_preview = runner.preview_walk_forward
+
+    def count_preview(*args, **kwargs):
+        nonlocal preview_calls
+        preview_calls += 1
+        return original_preview(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "preview_walk_forward", count_preview)
     queue_result = queue.build(
         planned_specs=(
             PlannedSpec(existing_preview.spec, generator_kind="grid"),
@@ -102,31 +111,63 @@ def test_candidate_queue_skips_existing_evaluation_keys(tmp_path: Path) -> None:
     )
 
     assert queue_result.duplicate_count == 1
-    assert queue_result.previewed_count == 2
+    assert queue_result.previewed_count == 1
+    assert preview_calls == 1
     assert len(queue_result.selected) == 1
     assert queue_result.selected[0].preview.spec.name == "ema_new"
 
 
-def test_candidate_queue_counts_same_batch_duplicates(tmp_path: Path) -> None:
+def test_candidate_queue_counts_same_batch_duplicates_before_preview(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "market.db"
     _seed_db(db_path)
     runner = EvaluationRunner(DataView(db_path), REGISTRY)
     queue = DeterministicCandidateQueue(history_entries=(), frontier_entries=())
     spec = _spec("ema_same", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0})
+    renamed_spec = _spec(
+        "ema_same_renamed",
+        "ema_cross",
+        {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0},
+    )
+    preview_calls = 0
+    original_preview = runner.preview_walk_forward
+
+    def count_preview(*args, **kwargs):
+        nonlocal preview_calls
+        preview_calls += 1
+        return original_preview(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "preview_walk_forward", count_preview)
 
     queue_result = queue.build(
         planned_specs=(
             PlannedSpec(spec, generator_kind="grid"),
-            PlannedSpec(spec, generator_kind="grid"),
+            PlannedSpec(renamed_spec, generator_kind="grid"),
         ),
         runner=runner,
         num_folds=3,
         embargo_bars=1,
     )
 
-    assert queue_result.previewed_count == 2
+    assert queue_result.previewed_count == 1
+    assert preview_calls == 1
     assert queue_result.duplicate_count == 1
     assert len(queue_result.selected) == 1
+
+
+def test_runner_evaluation_key_for_spec_matches_preview_key(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    spec = _spec("ema_same_key", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0})
+
+    preview = runner.preview_walk_forward(spec, num_folds=3, embargo_bars=1, locked_holdout_months=None)
+
+    assert runner.evaluation_key_for_spec(
+        spec,
+        num_folds=3,
+        embargo_bars=1,
+        locked_holdout_months=None,
+    ) == preview.evaluation_key
 
 
 def test_candidate_queue_tracks_suppressed_previewed_candidates(tmp_path: Path) -> None:

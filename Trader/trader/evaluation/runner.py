@@ -212,6 +212,40 @@ class EvaluationRunner:
             holdout_snapshot_id=holdout_snapshot_id,
         )
 
+    def evaluation_key_for_spec(
+        self,
+        spec: StrategySpec,
+        *,
+        num_folds: int = 3,
+        embargo_bars: int = 1,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+        locked_holdout_months: int | None = None,
+    ) -> str:
+        validated = self.registry.validate_spec(spec)
+        full_slice = self._load_data_slice(
+            validated,
+            start_ms=start_ms,
+            end_ms=end_ms,
+        )
+        data_slice, _, _ = self._split_research_and_holdout(
+            full_slice,
+            embargo_bars=embargo_bars,
+            locked_holdout_months=locked_holdout_months,
+        )
+        split_plan_id, _ = self._load_split_plan(
+            data_slice,
+            required_history=self.registry.required_history(validated),
+            num_folds=num_folds,
+            embargo_bars=embargo_bars,
+        )
+        return self.evaluation_key(
+            validated.spec_hash(),
+            data_slice.snapshot_id,
+            split_plan_id,
+            validated.exec_config.cost_model_id(),
+        )
+
     def _evaluate_fold(self, spec: StrategySpec, fold: Fold, bars: tuple[MarketBar, ...]) -> FoldResult:
         cache_key = (
             spec.spec_hash(),

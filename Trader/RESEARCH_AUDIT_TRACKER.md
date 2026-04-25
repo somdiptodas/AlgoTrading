@@ -148,9 +148,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: replaced the loop's hidden over-plan expression with named `DEFAULT_OVERPLAN_FACTOR`, `MIN_PLANNED_SPECS`, and a `--overplan-factor` CLI flag. Candidate queue results now track successful previews separately from duplicates and suppressions, and loop output includes explicit planned, previewed, selected, evaluated, duplicate, and suppressed counts.
   - Verification: `.venv/bin/pytest tests/test_loop_cmd.py tests/test_research_queue.py -q` passes 6 tests; `.venv/bin/pytest -q` passes 76 tests. Verification subagent reported no blockers.
 
-- [ ] Move dedupe earlier.
+- [x] Move dedupe earlier.
   - Compute evaluation keys before preview where possible.
   - Use current data snapshot, split plan, cost model, and spec hash to reject known evaluations before building previews.
+  - Completed 2026-04-25: added `EvaluationRunner.evaluation_key_for_spec()` to compute the same research evaluation key as preview using validated spec hash, current data snapshot, holdout-adjusted split plan, and cost model id. `DeterministicCandidateQueue` now rejects historical and same-batch duplicate evaluation keys before building previews, while preserving preview, duplicate, selection, and suppression counts.
+  - Verification: `.venv/bin/pytest tests/test_research_queue.py -q` passes 6 tests; `.venv/bin/pytest -q` passes 77 tests. Verification subagent reported no blockers.
 
 - [ ] Limit preview work.
   - Cheap-rank candidates first using params/history.
