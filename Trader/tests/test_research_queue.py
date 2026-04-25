@@ -11,11 +11,25 @@ from trader.evaluation.runner import EvaluationRunner
 from trader.ledger.store import LedgerStore
 from trader.research.candidates import DeterministicCandidateQueue
 from trader.research.planner import PlannedSpec
+from trader.research.suppressor import SuppressedSpec
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import FilterSpec, SignalSpec, StrategySpec
 
 
 NEW_YORK = ZoneInfo("America/New_York")
+
+
+class _FakeSuppressor:
+    def assess(self, spec: StrategySpec) -> SuppressedSpec:
+        return SuppressedSpec(
+            spec_hash=spec.spec_hash(),
+            signal_family=spec.signal.name,
+            nearest_failure_experiment_id="failed_1",
+            nearest_failure_distance=0.0,
+            failed_check_names=("return_positive",),
+            failure_count_in_radius=1,
+            suppression_weight=5.0,
+        )
 
 
 def _seed_db(path: Path, market_days: int = 5) -> None:
@@ -88,8 +102,58 @@ def test_candidate_queue_skips_existing_evaluation_keys(tmp_path: Path) -> None:
     )
 
     assert queue_result.duplicate_count == 1
+    assert queue_result.previewed_count == 2
     assert len(queue_result.selected) == 1
     assert queue_result.selected[0].preview.spec.name == "ema_new"
+
+
+def test_candidate_queue_counts_same_batch_duplicates(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    queue = DeterministicCandidateQueue(history_entries=(), frontier_entries=())
+    spec = _spec("ema_same", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0})
+
+    queue_result = queue.build(
+        planned_specs=(
+            PlannedSpec(spec, generator_kind="grid"),
+            PlannedSpec(spec, generator_kind="grid"),
+        ),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+    )
+
+    assert queue_result.previewed_count == 2
+    assert queue_result.duplicate_count == 1
+    assert len(queue_result.selected) == 1
+
+
+def test_candidate_queue_tracks_suppressed_previewed_candidates(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    queue = DeterministicCandidateQueue(history_entries=(), frontier_entries=(), suppressor=_FakeSuppressor())
+
+    queue_result = queue.build(
+        planned_specs=(
+            PlannedSpec(
+                _spec("ema_candidate", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+            PlannedSpec(
+                _spec("breakout_candidate", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+        ),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+    )
+
+    assert queue_result.previewed_count == 2
+    assert len(queue_result.suppression_records) == 2
+    assert len(queue_result.selected) == 2
 
 
 def test_runner_includes_intraday_baseline_deltas(tmp_path: Path) -> None:

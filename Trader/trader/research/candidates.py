@@ -22,6 +22,7 @@ class ScoredCandidate:
 @dataclass(frozen=True)
 class CandidateQueueResult:
     selected: tuple[ScoredCandidate, ...]
+    previewed_count: int
     duplicate_count: int
     suppression_records: tuple[SuppressedSpec, ...] = field(default_factory=tuple)
 
@@ -54,6 +55,7 @@ class DeterministicCandidateQueue:
     ) -> CandidateQueueResult:
         candidates: list[ScoredCandidate] = []
         suppression_records: list[SuppressedSpec] = []
+        previewed_count = 0
         duplicate_count = 0
         queued_evaluation_keys: set[str] = set()
         for planned in planned_specs:
@@ -66,6 +68,7 @@ class DeterministicCandidateQueue:
                 )
             except Exception:
                 continue
+            previewed_count += 1
             if preview.evaluation_key in self._historical_eval_keys:
                 duplicate_count += 1
                 continue
@@ -97,6 +100,7 @@ class DeterministicCandidateQueue:
             )
         return CandidateQueueResult(
             selected=self._select_candidates(candidates),
+            previewed_count=previewed_count,
             duplicate_count=duplicate_count,
             suppression_records=tuple(suppression_records),
         )

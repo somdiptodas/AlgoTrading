@@ -20,12 +20,20 @@ from trader.research.suppressor import RegionSuppressor
 from trader.strategies.registry import REGISTRY
 
 _ALL_SIGNAL_FAMILIES = ("ema_cross", "breakout", "rsi_reversion")
+DEFAULT_OVERPLAN_FACTOR = 12
+MIN_PLANNED_SPECS = 64
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the deterministic autonomous research loop")
     parser.add_argument("--database")
     parser.add_argument("--batch-size", type=int, default=6)
+    parser.add_argument(
+        "--overplan-factor",
+        type=int,
+        default=DEFAULT_OVERPLAN_FACTOR,
+        help=f"Plan this many specs per requested batch slot before preview selection (default: {DEFAULT_OVERPLAN_FACTOR})",
+    )
     parser.add_argument("--folds", type=int, default=3)
     parser.add_argument("--embargo-bars", type=int, default=1)
     parser.add_argument("--holdout-months", type=int, default=DEFAULT_LOCKED_HOLDOUT_MONTHS)
@@ -62,6 +70,10 @@ def _loop_run_id(args: argparse.Namespace) -> str:
     return sha256(payload.encode()).hexdigest()[:16]
 
 
+def _planned_spec_count(batch_size: int, overplan_factor: int) -> int:
+    return max(batch_size * overplan_factor, MIN_PLANNED_SPECS)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     settings = load_settings(database_path=args.database)
@@ -88,7 +100,7 @@ def main(argv: list[str] | None = None) -> None:
     signal_families = tuple(args.signal_family) if args.signal_family else _ALL_SIGNAL_FAMILIES
     frontier_specs = tuple((entry.experiment_id, entry.spec) for entry in frontier_entries)
     planned = planner.plan(
-        batch_size=max(args.batch_size * 12, 64),
+        batch_size=_planned_spec_count(args.batch_size, args.overplan_factor),
         frontier_specs=frontier_specs,
         allowed_signal_families=signal_families,
     )
@@ -116,7 +128,8 @@ def main(argv: list[str] | None = None) -> None:
 
     completed = []
     reused = queue_result.duplicate_count
-    for candidate in queue_result.selected[: args.batch_size]:
+    selected_candidates = queue_result.selected[: args.batch_size]
+    for candidate in selected_candidates:
         result = runner.evaluate_preview(candidate.preview, include_robustness=True)
         critique = critic.critique(result)
         report_markdown = render_experiment_report(result, critique=critique.to_payload())
@@ -139,6 +152,14 @@ def main(argv: list[str] | None = None) -> None:
             "accepted": len(queue_result.selected),
             "completed": len(completed),
             "reused": reused,
+            "counts": {
+                "planned": len(planned),
+                "previewed": queue_result.previewed_count,
+                "selected": len(queue_result.selected),
+                "evaluated": len(completed),
+                "duplicate": queue_result.duplicate_count,
+                "suppressed": suppression_logged,
+            },
             "rejected": list(generated.rejected),
             "suppressor": {
                 **suppressor.summary(),
