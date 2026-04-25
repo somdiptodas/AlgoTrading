@@ -101,12 +101,14 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: new evaluations now use `research_frontier` instead of `frontier`, and promotion requires all robustness gates, positive return, positive annualized risk-adjusted return, at least 10 trades, and positive buy-and-hold edge. `candidate` additionally requires more than 0.5 percentage points of buy-and-hold edge. Active frontier-neighborhood planning now seeds only from `research_frontier` and `candidate`, while legacy `frontier` rows remain readable but are downgraded for ranking and critic semantics.
   - Verification: `.venv/bin/pytest tests/test_promotion.py tests/test_ledger.py tests/test_research_queue.py -q` passes 24 tests; `.venv/bin/pytest -q` passes 48 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Add fairer intraday baselines.
+- [x] Add fairer intraday baselines.
   - Keep buy-and-hold, but add baselines that match the strategy's overnight-flat constraint:
     - always flat
     - regular-session open-to-close long
     - session-long flat-at-close
     - randomized entry with same exposure/trade count
+  - Completed 2026-04-25: kept `always_flat` and `buy_and_hold`, added `regular_session_open_to_close_long`, engine-faithful `session_long_flat_at_close`, and deterministic `randomized_entry_same_exposure` baselines. The randomized baseline is seeded from spec/fold/window material, uses cost-aware fills, preserves realized trade count and exposure when a valid schedule exists, and otherwise falls back explicitly to flat.
+  - Verification: `.venv/bin/pytest tests/test_baselines.py tests/test_research_queue.py -q` passes 8 tests; `.venv/bin/pytest -q` passes 54 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Add a locked holdout policy.
   - Reserve the most recent 3-6 months from research-loop selection.

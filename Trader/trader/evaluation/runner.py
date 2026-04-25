@@ -203,7 +203,12 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
-        baselines = evaluate_baselines(test_bars, spec.exec_config.initial_cash)
+        baselines = evaluate_baselines(
+            test_bars,
+            spec.exec_config,
+            strategy_trades=result.trades,
+            seed_material=f"{spec.spec_hash()}|{fold.fold_id}|{fold.test_start_utc}|{fold.test_end_utc}",
+        )
         fold_result = FoldResult(
             fold_id=fold.fold_id,
             train_start_utc=fold.train_start_utc,

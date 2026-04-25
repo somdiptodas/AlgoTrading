@@ -92,6 +92,26 @@ def test_candidate_queue_skips_existing_evaluation_keys(tmp_path: Path) -> None:
     assert queue_result.selected[0].preview.spec.name == "ema_new"
 
 
+def test_runner_includes_intraday_baseline_deltas(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+
+    result = runner.evaluate_walk_forward(
+        _spec("ema_baselines", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        num_folds=3,
+        embargo_bars=1,
+        include_robustness=False,
+    )
+
+    baseline_names = set(result.fold_results[0].baseline_metrics)
+    assert "regular_session_open_to_close_long" in baseline_names
+    assert "session_long_flat_at_close" in baseline_names
+    assert "randomized_entry_same_exposure" in baseline_names
+    assert "delta_session_long_flat_at_close_return_pct" in result.aggregate_metrics
+    assert "delta_randomized_entry_same_exposure_annualized_sharpe" in result.aggregate_metrics
+
+
 def test_candidate_queue_prefers_underexplored_family_when_scores_are_close(tmp_path: Path) -> None:
     db_path = tmp_path / "market.db"
     _seed_db(db_path)
