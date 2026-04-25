@@ -13,8 +13,9 @@ from trader.data.models import MarketBar
 from trader.evaluation.runner import ExperimentResult, FoldResult
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
-from trader.ledger.entry import json_dumps, json_loads
-from trader.ledger.store import LedgerStore
+from trader.ledger.entry import LedgerEntry, entry_from_json, experiment_result_to_payload, json_dumps, json_loads
+import trader.ledger.store as ledger_store_module
+from trader.ledger.store import SCHEMA, LedgerStore
 from trader.reporting.report import render_experiment_report
 from trader.strategies.spec import SignalSpec, StrategySpec
 
@@ -122,6 +123,208 @@ def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:
     assert len(ledger.top_experiments()) == 1
     for path in artifact_paths.values():
         assert Path(path).exists()
+
+
+def test_ledger_entry_json_is_compact_and_artifacts_keep_full_details(tmp_path: Path) -> None:
+    result = _sample_result()
+    ledger = LedgerStore(tmp_path / "ledger.db")
+    ledger.initialize()
+    artifacts = ArtifactStore(tmp_path / "artifacts", tmp_path / "reports")
+    artifact_paths = artifacts.write_experiment(result)
+    entry = ledger.record_result(result, artifact_paths=artifact_paths, generator_kind="grid")
+
+    with sqlite3.connect(ledger.database_path) as connection:
+        raw_entry_json = connection.execute(
+            "SELECT entry_json FROM ledger_entries WHERE experiment_id = ?",
+            (entry.experiment_id,),
+        ).fetchone()[0]
+
+    assert '"bars"' not in raw_entry_json
+    assert '"equity_curve"' not in raw_entry_json
+
+    entry_payload = json.loads(raw_entry_json)
+    fold_payload = entry_payload["result"]["fold_results"][0]
+    assert "backtest" not in fold_payload
+    assert "trades" not in fold_payload
+    assert fold_payload["backtest_summary"] == {
+        "bar_count": 3,
+        "final_cash": 100_015.0,
+        "initial_cash": 100_000.0,
+        "trade_count": 1,
+    }
+
+    artifact_result = json.loads(Path(artifact_paths["result"]).read_text(encoding="utf-8"))
+    assert len(artifact_result["fold_results"][0]["backtest"]["bars"]) == 3
+    assert len(artifact_result["fold_results"][0]["backtest"]["trades"]) == 1
+    assert len(artifact_result["fold_results"][0]["backtest"]["equity_curve"]) == 3
+
+    fetched = ledger.get_by_evaluation_key(entry.evaluation_key)
+    assert fetched is not None
+    assert fetched.aggregate_metrics == result.aggregate_metrics
+    assert fetched.fold_results[0].metrics == result.fold_results[0].metrics
+    assert fetched.fold_results[0].backtest.bars == tuple()
+    assert fetched.fold_results[0].backtest.trades == tuple()
+    assert fetched.fold_results[0].backtest.equity_curve == tuple()
+
+
+def test_legacy_full_ledger_entry_json_still_reads() -> None:
+    result = _sample_result()
+    legacy_payload = {
+        "experiment_id": result.experiment_id,
+        "evaluation_key": "legacy_key",
+        "status": result.status,
+        "result": experiment_result_to_payload(result),
+        "artifact_paths": {},
+        "generator_kind": "grid",
+        "parent_experiment_ids": [],
+        "critique": None,
+        "created_at_utc": "2026-01-05T00:00:00+00:00",
+        "updated_at_utc": "2026-01-05T00:00:00+00:00",
+        "completed_at_utc": "2026-01-05T00:00:00+00:00",
+    }
+
+    entry = entry_from_json(json_dumps(legacy_payload))
+
+    assert entry.evaluation_key == "legacy_key"
+    assert len(entry.fold_results[0].backtest.bars) == 3
+    assert len(entry.fold_results[0].backtest.trades) == 1
+    assert entry.fold_results[0].backtest.equity_curve == (100_000.0, 100_010.0, 100_015.0)
+
+
+def test_top_experiments_ranks_from_scalar_columns_before_deserializing_winners(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ledger = LedgerStore(tmp_path / "ledger.db")
+    ledger.initialize()
+    base = _sample_result()
+
+    for index, metrics in enumerate(
+        (
+            {"return_pct": 1.0, "sharpe_like": 0.1, "max_drawdown_pct": 4.0, "trade_count": 2.0},
+            {"return_pct": 4.0, "sharpe_like": 0.8, "max_drawdown_pct": 1.0, "trade_count": 4.0},
+            {"return_pct": 2.0, "sharpe_like": 0.3, "max_drawdown_pct": 3.0, "trade_count": 3.0},
+        )
+    ):
+        result = replace(
+            base,
+            experiment_id=f"exp_{index}",
+            aggregate_metrics={
+                **base.aggregate_metrics,
+                **metrics,
+                "delta_buy_and_hold_return_pct": metrics["return_pct"] - 0.5,
+            },
+        )
+        entry = LedgerEntry.from_result(
+            result,
+            evaluation_key=f"key_{index}",
+            artifact_paths={},
+            generator_kind="grid",
+        )
+        ledger.upsert_entry(entry)
+
+    parse_count = 0
+    original_entry_from_json = ledger_store_module.entry_from_json
+
+    def counting_entry_from_json(payload: str | bytes | bytearray) -> LedgerEntry:
+        nonlocal parse_count
+        parse_count += 1
+        return original_entry_from_json(payload)
+
+    monkeypatch.setattr(ledger_store_module, "entry_from_json", counting_entry_from_json)
+
+    top = ledger.top_experiments(limit=1)
+
+    assert [entry.experiment_id for entry in top] == ["exp_1"]
+    assert parse_count == 1
+
+
+def test_initialize_migrates_legacy_ledger_trade_count_and_compacts_json(tmp_path: Path) -> None:
+    database_path = tmp_path / "legacy_ledger.db"
+    result = _sample_result()
+    entry = LedgerEntry.from_result(
+        result,
+        evaluation_key="legacy_key",
+        artifact_paths={},
+        generator_kind="grid",
+    )
+    legacy_payload = {
+        **entry.to_payload(),
+        "result": experiment_result_to_payload(result),
+    }
+    legacy_entry_json = json_dumps(legacy_payload)
+    old_schema = SCHEMA.replace("    trade_count REAL NOT NULL DEFAULT 0.0,\n", "")
+
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(old_schema)
+        connection.execute(
+            """
+            INSERT INTO ledger_entries (
+                experiment_id,
+                evaluation_key,
+                status,
+                signal_family,
+                promotion_stage,
+                spec_hash,
+                data_snapshot_id,
+                split_plan_id,
+                cost_model_id,
+                generator_kind,
+                return_pct,
+                sharpe_like,
+                max_drawdown_pct,
+                delta_buy_and_hold_return_pct,
+                fold_consistency_pass,
+                neighborhood_pass,
+                created_at_utc,
+                updated_at_utc,
+                completed_at_utc,
+                entry_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry.experiment_id,
+                entry.evaluation_key,
+                entry.status,
+                entry.spec.signal.name,
+                entry.promotion_stage,
+                entry.spec_hash,
+                entry.data_snapshot_id,
+                entry.split_plan_id,
+                entry.cost_model_id,
+                entry.generator_kind,
+                entry.metric("return_pct"),
+                entry.metric("sharpe_like"),
+                entry.metric("max_drawdown_pct"),
+                entry.metric("delta_buy_and_hold_return_pct"),
+                int(bool(entry.robustness_checks.get("fold_consistency_pass"))),
+                int(bool(entry.robustness_checks.get("neighborhood_pass"))),
+                entry.created_at_utc,
+                entry.updated_at_utc,
+                entry.completed_at_utc,
+                legacy_entry_json,
+            ),
+        )
+
+    LedgerStore(database_path).initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(ledger_entries)").fetchall()
+        }
+        row = connection.execute(
+            "SELECT trade_count, entry_json FROM ledger_entries WHERE experiment_id = ?",
+            (entry.experiment_id,),
+        ).fetchone()
+
+    assert "trade_count" in columns
+    assert row["trade_count"] == result.aggregate_metrics["trade_count"]
+    migrated_payload = json.loads(row["entry_json"])
+    fold_payload = migrated_payload["result"]["fold_results"][0]
+    assert "backtest" not in fold_payload
+    assert fold_payload["backtest_summary"]["bar_count"] == 3
 
 
 def test_json_dumps_sanitizes_non_finite_values() -> None:

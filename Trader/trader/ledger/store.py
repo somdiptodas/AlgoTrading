@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Sequence
@@ -47,6 +48,7 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     sharpe_like REAL NOT NULL DEFAULT 0.0,
     max_drawdown_pct REAL NOT NULL DEFAULT 0.0,
     delta_buy_and_hold_return_pct REAL NOT NULL DEFAULT 0.0,
+    trade_count REAL NOT NULL DEFAULT 0.0,
     fold_consistency_pass INTEGER NOT NULL DEFAULT 0,
     neighborhood_pass INTEGER NOT NULL DEFAULT 0,
     created_at_utc TEXT NOT NULL,
@@ -66,6 +68,23 @@ ON ledger_entries (signal_family, completed_at_utc DESC);
 """
 
 
+@dataclass(frozen=True)
+class _MetricRow:
+    experiment_id: str
+    promotion_stage: str
+    return_pct: float
+    sharpe_like: float
+    max_drawdown_pct: float
+    delta_buy_and_hold_return_pct: float
+    trade_count: float
+    fold_consistency_pass: bool
+    neighborhood_pass: bool
+    completed_at_utc: str
+
+    def metric(self, name: str, default: float = 0.0) -> float:
+        return float(getattr(self, name, default))
+
+
 class LedgerStore:
     def __init__(self, database_path: str | Path) -> None:
         self.database_path = Path(database_path)
@@ -75,6 +94,7 @@ class LedgerStore:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(SCHEMA)
+            self._ensure_columns(connection)
 
     def evaluation_key(
         self,
@@ -136,13 +156,14 @@ class LedgerStore:
                     sharpe_like,
                     max_drawdown_pct,
                     delta_buy_and_hold_return_pct,
+                    trade_count,
                     fold_consistency_pass,
                     neighborhood_pass,
                     created_at_utc,
                     updated_at_utc,
                     completed_at_utc,
                     entry_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(experiment_id) DO UPDATE SET
                     evaluation_key = excluded.evaluation_key,
                     status = excluded.status,
@@ -157,6 +178,7 @@ class LedgerStore:
                     sharpe_like = excluded.sharpe_like,
                     max_drawdown_pct = excluded.max_drawdown_pct,
                     delta_buy_and_hold_return_pct = excluded.delta_buy_and_hold_return_pct,
+                    trade_count = excluded.trade_count,
                     fold_consistency_pass = excluded.fold_consistency_pass,
                     neighborhood_pass = excluded.neighborhood_pass,
                     updated_at_utc = excluded.updated_at_utc,
@@ -212,14 +234,34 @@ class LedgerStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT entry_json
+                SELECT experiment_id,
+                       promotion_stage,
+                       return_pct,
+                       sharpe_like,
+                       max_drawdown_pct,
+                       delta_buy_and_hold_return_pct,
+                       trade_count,
+                       fold_consistency_pass,
+                       neighborhood_pass,
+                       completed_at_utc
                 FROM ledger_entries
                 WHERE status = 'completed'
-                ORDER BY completed_at_utc DESC, experiment_id DESC
                 """
             ).fetchall()
-        entries = [entry_from_json(row["entry_json"]) for row in rows]
-        return self.query.top_experiments(entries, limit=limit)
+            selected_ids = self._top_experiment_ids([self._metric_row(row) for row in rows], limit=limit)
+            if not selected_ids:
+                return tuple()
+            placeholders = ",".join("?" for _ in selected_ids)
+            entry_rows = connection.execute(
+                f"""
+                SELECT experiment_id, entry_json
+                FROM ledger_entries
+                WHERE experiment_id IN ({placeholders})
+                """,
+                selected_ids,
+            ).fetchall()
+        entries_by_id = {str(row["experiment_id"]): entry_from_json(row["entry_json"]) for row in entry_rows}
+        return tuple(entries_by_id[experiment_id] for experiment_id in selected_ids)
 
     def stats(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -305,6 +347,34 @@ class LedgerStore:
         connection.row_factory = sqlite3.Row
         return connection
 
+    def _ensure_columns(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(ledger_entries)").fetchall()
+        }
+        if "trade_count" not in columns:
+            connection.execute("ALTER TABLE ledger_entries ADD COLUMN trade_count REAL NOT NULL DEFAULT 0.0")
+            self._backfill_trade_count_and_compact_entries(connection)
+
+    def _backfill_trade_count_and_compact_entries(self, connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            "SELECT experiment_id, trade_count, entry_json FROM ledger_entries"
+        ).fetchall()
+        for row in rows:
+            entry = entry_from_json(row["entry_json"])
+            compact_json = entry_to_json(entry)
+            trade_count = entry.metric("trade_count")
+            if float(row["trade_count"]) == trade_count and row["entry_json"] == compact_json:
+                continue
+            connection.execute(
+                """
+                UPDATE ledger_entries
+                SET trade_count = ?, entry_json = ?
+                WHERE experiment_id = ?
+                """,
+                (trade_count, compact_json, row["experiment_id"]),
+            )
+
     def _get_by_experiment_id(self, experiment_id: str) -> LedgerEntry | None:
         with self._connect() as connection:
             row = connection.execute(
@@ -331,10 +401,75 @@ class LedgerStore:
             entry.metric("sharpe_like"),
             entry.metric("max_drawdown_pct"),
             entry.metric("delta_buy_and_hold_return_pct"),
+            entry.metric("trade_count"),
             int(bool(entry.robustness_checks.get("fold_consistency_pass"))),
             int(bool(entry.robustness_checks.get("neighborhood_pass"))),
             entry.created_at_utc,
             entry.updated_at_utc,
             entry.completed_at_utc,
             entry_to_json(entry),
+        )
+
+    def _metric_row(self, row: sqlite3.Row) -> _MetricRow:
+        return _MetricRow(
+            experiment_id=str(row["experiment_id"]),
+            promotion_stage=str(row["promotion_stage"]),
+            return_pct=float(row["return_pct"]),
+            sharpe_like=float(row["sharpe_like"]),
+            max_drawdown_pct=float(row["max_drawdown_pct"]),
+            delta_buy_and_hold_return_pct=float(row["delta_buy_and_hold_return_pct"]),
+            trade_count=float(row["trade_count"]),
+            fold_consistency_pass=bool(row["fold_consistency_pass"]),
+            neighborhood_pass=bool(row["neighborhood_pass"]),
+            completed_at_utc="" if row["completed_at_utc"] is None else str(row["completed_at_utc"]),
+        )
+
+    def _top_experiment_ids(self, rows: Sequence[_MetricRow], *, limit: int) -> tuple[str, ...]:
+        frontier = [
+            row
+            for row in rows
+            if not any(self._dominates_metric_row(other, row) for other in rows if other != row)
+        ]
+        frontier_ids = {row.experiment_id for row in frontier}
+        remaining = [row for row in rows if row.experiment_id not in frontier_ids]
+        frontier.sort(key=self._metric_sort_key, reverse=True)
+        remaining.sort(key=self._metric_sort_key, reverse=True)
+        return tuple(row.experiment_id for row in (frontier + remaining)[:limit])
+
+    def _dominates_metric_row(self, left: _MetricRow, right: _MetricRow) -> bool:
+        no_worse = (
+            left.return_pct >= right.return_pct
+            and left.sharpe_like >= right.sharpe_like
+            and left.max_drawdown_pct <= right.max_drawdown_pct
+        )
+        strictly_better = (
+            left.return_pct > right.return_pct
+            or left.sharpe_like > right.sharpe_like
+            or left.max_drawdown_pct < right.max_drawdown_pct
+        )
+        return no_worse and strictly_better
+
+    def _metric_sort_key(self, row: _MetricRow) -> tuple[float, float, float, float, str, str]:
+        return (
+            self._metric_composite_score(row),
+            row.sharpe_like,
+            row.return_pct,
+            -row.max_drawdown_pct,
+            row.completed_at_utc,
+            row.experiment_id,
+        )
+
+    def _metric_composite_score(self, row: _MetricRow) -> float:
+        stage_rank = {"candidate": 3.0, "frontier": 2.0, "exploratory": 1.0}.get(row.promotion_stage, 0.0)
+        fold_consistency = 1.0 if row.fold_consistency_pass else 0.0
+        neighborhood = 1.0 if row.neighborhood_pass else 0.0
+        return (
+            stage_rank * 1_000.0
+            + fold_consistency * 100.0
+            + neighborhood * 50.0
+            + row.delta_buy_and_hold_return_pct * 4.0
+            + row.sharpe_like * 20.0
+            + row.return_pct
+            - row.max_drawdown_pct * 0.5
+            + min(row.trade_count, 25.0)
         )

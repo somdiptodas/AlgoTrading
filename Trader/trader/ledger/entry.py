@@ -142,11 +142,44 @@ def fold_result_to_payload(fold_result: FoldResult) -> dict[str, object]:
     }
 
 
+def fold_result_to_ledger_payload(fold_result: FoldResult) -> dict[str, object]:
+    return {
+        "fold_id": fold_result.fold_id,
+        "train_start_utc": fold_result.train_start_utc,
+        "train_end_utc": fold_result.train_end_utc,
+        "test_start_utc": fold_result.test_start_utc,
+        "test_end_utc": fold_result.test_end_utc,
+        "metrics": dict(fold_result.metrics),
+        "baseline_metrics": {
+            name: dict(metrics) for name, metrics in sorted(fold_result.baseline_metrics.items())
+        },
+        "baseline_deltas": dict(fold_result.baseline_deltas),
+        "warnings": list(fold_result.warnings),
+        "backtest_summary": {
+            "bar_count": len(fold_result.backtest.bars),
+            "trade_count": len(fold_result.backtest.trades),
+            "initial_cash": fold_result.backtest.initial_cash,
+            "final_cash": fold_result.backtest.final_cash,
+        },
+    }
+
+
 def fold_result_from_payload(payload: dict[str, Any]) -> FoldResult:
     baseline_metrics = {
         str(name): _float_dict(dict(metrics))
         for name, metrics in dict(payload.get("baseline_metrics", {})).items()
     }
+    if "backtest" in payload:
+        backtest = backtest_from_payload(dict(payload.get("backtest", {})))
+    else:
+        summary = dict(payload.get("backtest_summary", {}))
+        backtest = BacktestResult(
+            bars=tuple(),
+            trades=tuple(),
+            equity_curve=tuple(),
+            initial_cash=float(summary.get("initial_cash", 0.0)),
+            final_cash=float(summary.get("final_cash", 0.0)),
+        )
     return FoldResult(
         fold_id=str(payload["fold_id"]),
         train_start_utc=str(payload["train_start_utc"]),
@@ -157,7 +190,7 @@ def fold_result_from_payload(payload: dict[str, Any]) -> FoldResult:
         baseline_metrics=baseline_metrics,
         baseline_deltas=_float_dict(dict(payload.get("baseline_deltas", {}))),
         warnings=tuple(str(item) for item in payload.get("warnings", ())),
-        backtest=backtest_from_payload(dict(payload.get("backtest", {}))),
+        backtest=backtest,
     )
 
 
@@ -172,6 +205,22 @@ def experiment_result_to_payload(result: ExperimentResult) -> dict[str, object]:
         "cost_model_id": result.cost_model_id,
         "aggregate_metrics": dict(result.aggregate_metrics),
         "fold_results": [fold_result_to_payload(item) for item in result.fold_results],
+        "robustness_checks": dict(result.robustness_checks),
+        "promotion_stage": result.promotion_stage,
+    }
+
+
+def experiment_result_to_ledger_payload(result: ExperimentResult) -> dict[str, object]:
+    return {
+        "experiment_id": result.experiment_id,
+        "status": result.status,
+        "spec": result.spec.to_payload(),
+        "spec_hash": result.spec_hash,
+        "data_snapshot_id": result.data_snapshot_id,
+        "split_plan_id": result.split_plan_id,
+        "cost_model_id": result.cost_model_id,
+        "aggregate_metrics": dict(result.aggregate_metrics),
+        "fold_results": [fold_result_to_ledger_payload(item) for item in result.fold_results],
         "robustness_checks": dict(result.robustness_checks),
         "promotion_stage": result.promotion_stage,
     }
@@ -285,7 +334,7 @@ class LedgerEntry:
             "experiment_id": self.experiment_id,
             "evaluation_key": self.evaluation_key,
             "status": self.status,
-            "result": experiment_result_to_payload(self.to_result()),
+            "result": experiment_result_to_ledger_payload(self.to_result()),
             "artifact_paths": dict(self.artifact_paths),
             "generator_kind": self.generator_kind,
             "parent_experiment_ids": list(self.parent_experiment_ids),

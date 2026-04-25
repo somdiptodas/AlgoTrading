@@ -12,9 +12,9 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 - Frontier experiments: 10.
 - Experiments beating buy-and-hold: 0.
 - Best observed absolute return: about +2.11%, still about -10.63 percentage points behind buy-and-hold.
-- Research storage size: about 7.0 GB total, including 4.8 GB artifacts and 2.2 GB `ledger.db`.
-- Ledger JSON payload size: about 2.24 GB total, averaging about 31 MB per ledger row.
-- Test status: `.venv/bin/pytest -q` passes 19 tests as of 2026-04-25 after fixing full-fold neighbor robustness evaluation.
+- Research storage size after the 2026-04-25 ledger compaction: about 4.8 GB total, with 4.8 GB artifacts and a 716 KB `ledger.db`.
+- Ledger JSON payload size after the 2026-04-25 compaction: about 0.48 MB total across 72 rows.
+- Test status: `.venv/bin/pytest -q` passes 30 tests as of 2026-04-25 after compact ledger storage.
 
 ## Verification Of Claude Audit
 
@@ -78,10 +78,14 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Data cleanup: sanitized the existing ignored `data/research/ledger.db` rows and artifact JSON files; follow-up scans found 0 ledger rows and 0 artifact JSON files containing `Infinity`, `-Infinity`, or `NaN`.
   - Verification: `.venv/bin/pytest tests/test_ledger.py tests/test_splits_metrics_registry.py -q` passes 12 tests; `.venv/bin/pytest -q` passes 26 tests.
 
-- [ ] Compact ledger storage.
+- [x] Compact ledger storage.
   - Keep only compact summary fields in `ledger_entries.entry_json`.
   - Store full bars, trades, and equity curves only in artifact files.
   - Query frontier and history from indexed columns instead of deserializing full results.
+  - Completed 2026-04-25: ledger entries now store compact fold summaries with metrics, baselines, warnings, and `backtest_summary` counts/cash only; full bars, trades, and equity curves remain in artifact `result.json`, `trades.json`, and `equity.json`.
+  - Query path: added a scalar `trade_count` ledger column and changed `top_experiments()` to rank from scalar DB columns before deserializing only the selected compact entries.
+  - Migration/data cleanup: legacy full `entry_json` rows remain readable; missing `trade_count` columns are backfilled during initialization; the ignored live `data/research/ledger.db` was compacted from about 2.35 GB of `entry_json` to about 0.48 MB, with 216 fold summaries, 0 embedded full backtests, and 0 zero-count fold summaries.
+  - Verification: `.venv/bin/pytest tests/test_ledger.py tests/test_research_queue.py -q` passes 9 tests; `.venv/bin/pytest -q` passes 30 tests.
 
 ## P1 - Evaluation Quality And Promotion Semantics
 
