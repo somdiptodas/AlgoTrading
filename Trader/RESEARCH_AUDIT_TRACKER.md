@@ -177,9 +177,11 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: `HeuristicCritic` now emits structured `planning_penalties` for non-positive return, benchmark failure, peaky neighborhoods, fold inconsistency, and high trade count, with a legacy note-string fallback for older ledger critiques. `DeterministicCandidateQueue` applies historical family-level critic penalties in both cheap pre-preview ranking and final static scoring.
   - Verification: `.venv/bin/pytest tests/test_promotion.py tests/test_research_queue.py tests/test_ledger.py -q` passes 39 tests; `.venv/bin/pytest -q` passes 92 tests. Verification subagent reported no blockers.
 
-- [ ] Resolve session filter redundancy.
+- [x] Resolve session filter redundancy.
   - Either remove `FilterSpec("session", {"session": "regular"})` from generated specs or make it control `ExecConfig.regular_session_only`.
   - Ensure semantically identical execution specs have identical hashes.
+  - Completed 2026-04-25: planner-generated specs no longer include the redundant regular-session filter, and registry validation strips normalized `session=regular` filters while still rejecting unsupported session filters. Strategy payload/hash canonicalization now treats an explicit regular-session filter as equivalent to the default `ExecConfig.regular_session_only=True` execution behavior.
+  - Verification: `.venv/bin/pytest tests/test_planner.py tests/test_splits_metrics_registry.py tests/test_research_queue.py -q` passes 26 tests; `.venv/bin/pytest -q` passes 94 tests. Verification subagent reported no blockers.
 
 - [ ] Pass `generator_kind` into artifact manifests.
   - Current ledger rows know generator kind, but artifact manifests write `null`.

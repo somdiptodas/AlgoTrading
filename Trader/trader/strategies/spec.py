@@ -58,6 +58,7 @@ class StrategySpec:
     seed: int = 0
 
     def to_payload(self, *, include_name: bool = True) -> dict[str, object]:
+        exec_payload = asdict(self.exec_config)
         payload: dict[str, object] = {
             "instrument": self.instrument,
             "multiplier": self.multiplier,
@@ -66,9 +67,9 @@ class StrategySpec:
             "sizing": {"name": self.sizing.name, "params": dict(sorted(self.sizing.params.items()))},
             "filters": [
                 {"name": filter_spec.name, "params": dict(sorted(filter_spec.params.items()))}
-                for filter_spec in sorted(self.filters, key=lambda item: item.name)
+                for filter_spec in sorted(self._semantic_filters(), key=lambda item: item.name)
             ],
-            "exec_config": asdict(self.exec_config),
+            "exec_config": exec_payload,
             "feature_set": list(self.feature_set),
             "tags": list(self.tags),
             "seed": self.seed,
@@ -76,6 +77,12 @@ class StrategySpec:
         if include_name:
             payload["name"] = self.name
         return payload
+
+    def _semantic_filters(self) -> tuple[FilterSpec, ...]:
+        return tuple(
+            filter_spec for filter_spec in self.filters
+            if not _is_redundant_regular_session_filter(filter_spec, self.exec_config)
+        )
 
     def canonical_json(self, *, include_name: bool = True) -> str:
         return json.dumps(
@@ -117,3 +124,9 @@ class StrategySpec:
             tags=tuple(payload.get("tags", ())),  # type: ignore[arg-type]
             seed=int(payload.get("seed", 0)),
         )
+
+
+def _is_redundant_regular_session_filter(filter_spec: FilterSpec, exec_config: ExecConfig) -> bool:
+    if filter_spec.name != "session" or not exec_config.regular_session_only:
+        return False
+    return str(filter_spec.params.get("session", "regular")) == "regular"

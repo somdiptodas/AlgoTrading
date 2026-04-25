@@ -15,7 +15,7 @@ from trader.evaluation.splits import build_walk_forward_folds
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
 from trader.strategies.registry import REGISTRY
-from trader.strategies.spec import ExecConfig, SignalSpec, StrategySpec
+from trader.strategies.spec import ExecConfig, FilterSpec, SignalSpec, StrategySpec
 
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -133,6 +133,45 @@ def test_strategy_hash_is_stable() -> None:
         signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
     )
     assert validated.spec_hash() == REGISTRY.validate_spec(renamed).spec_hash()
+
+
+def test_regular_session_filter_is_hash_equivalent_to_exec_config_default() -> None:
+    with_filter = REGISTRY.validate_spec(
+        StrategySpec(
+            name="ema_with_filter",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+            filters=(FilterSpec("session", {"session": "regular"}),),
+        )
+    )
+    without_filter = REGISTRY.validate_spec(
+        StrategySpec(
+            name="ema_without_filter",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        )
+    )
+    default_filter = REGISTRY.validate_spec(
+        StrategySpec(
+            name="ema_default_filter",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+            filters=(FilterSpec("session", {}),),
+        )
+    )
+
+    assert with_filter.spec_hash() == without_filter.spec_hash()
+    assert default_filter.spec_hash() == without_filter.spec_hash()
+    assert with_filter.filters == tuple()
+    assert with_filter.to_payload(include_name=False)["filters"] == []
+
+
+def test_unsupported_session_filter_still_rejected() -> None:
+    with pytest.raises(ValueError, match="Only regular-session filtering is supported"):
+        REGISTRY.validate_spec(
+            StrategySpec(
+                name="ema_bad_session",
+                signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+                filters=(FilterSpec("session", {"session": "extended"}),),
+            )
+        )
 
 
 def test_strategy_validation_rejects_non_finite_numeric_values() -> None:

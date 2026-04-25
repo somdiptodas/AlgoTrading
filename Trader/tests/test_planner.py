@@ -38,6 +38,7 @@ def test_planner_reserves_grid_slot_for_each_enabled_family_before_truncation() 
     )
 
     assert [item.spec.signal.name for item in planned] == ["ema_cross", "breakout", "rsi_reversion"]
+    assert all(item.spec.filters == tuple() for item in planned)
 
 
 def test_planner_frontier_is_not_crowded_out_by_grid_ordering() -> None:

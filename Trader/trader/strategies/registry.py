@@ -77,7 +77,14 @@ class StrategyRegistry:
         normalized_sizing = self.sizing_handlers[spec.sizing.name]["normalize_params"](spec.sizing.params)
         self._validate_finite_params(spec.signal.name, normalized_signal)
         self._validate_finite_params(spec.sizing.name, normalized_sizing)
-        normalized_filters = tuple(self._validate_filter(filter_spec) for filter_spec in spec.filters)
+        normalized_filters = tuple(
+            filter_spec for filter_spec in (self._validate_filter(filter_spec) for filter_spec in spec.filters)
+            if not (
+                filter_spec.name == "session"
+                and spec.exec_config.regular_session_only
+                and filter_spec.params.get("session") == "regular"
+            )
+        )
         normalized = replace(
             spec,
             signal=SignalSpec(spec.signal.name, normalized_signal),

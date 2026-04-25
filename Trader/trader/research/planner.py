@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from trader.strategies.registry import StrategyRegistry
-from trader.strategies.spec import FilterSpec, SignalSpec, StrategySpec
+from trader.strategies.spec import SignalSpec, StrategySpec
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,6 @@ class DeterministicPlanner:
                             StrategySpec(
                                 name=f"{signal_name}_grid",
                                 signal=SignalSpec(signal_name, params),
-                                filters=(FilterSpec("session", {"session": "regular"}),),
                             )
                         ),
                         generator_kind="grid",
@@ -79,6 +78,5 @@ class DeterministicPlanner:
             {
                 **spec.to_payload(),
                 "name": f"{spec.signal.name}_{spec.spec_hash()[:8]}",
-                "filters": [{"name": "session", "params": {"session": "regular"}}],
             }
         )
