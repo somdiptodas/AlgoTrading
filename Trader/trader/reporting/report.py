@@ -283,6 +283,8 @@ def _render_holdout(holdout: FoldResult | None) -> str:
             )
         )
     )
+    if holdout.warnings:
+        lines.append("  - Warnings: " + "; ".join(holdout.warnings))
     return "\n".join(lines)
 
 

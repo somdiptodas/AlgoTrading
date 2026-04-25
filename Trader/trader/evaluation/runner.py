@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time
 from hashlib import sha256
 from typing import Sequence
 
 from trader.data.models import MarketBar
 from trader.data.view import DataSlice, DataView
 from trader.evaluation.baselines import baseline_deltas, evaluate_baselines
+from trader.evaluation.data_quality import validate_bars
 from trader.evaluation.metrics import aggregate_metric_dicts, annualized_sharpe_for_backtests, calculate_metrics
 from trader.evaluation.promotion import promotion_stage
 from trader.evaluation.robustness import RobustnessResult, assess_robustness
@@ -224,6 +225,7 @@ class EvaluationRunner:
             return cached
         train_bars = tuple(bars[fold.train_start_idx : fold.train_end_idx + 1])
         test_bars = tuple(bars[fold.test_start_idx : fold.test_end_idx + 1])
+        warnings = self._quality_warnings(spec, test_bars)
         regime = self.registry.generate_regime(spec, train_bars, test_bars)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
@@ -243,7 +245,7 @@ class EvaluationRunner:
             metrics=metrics,
             baseline_metrics=baselines,
             baseline_deltas=baseline_deltas(metrics, baselines),
-            warnings=tuple(),
+            warnings=warnings,
             backtest=result,
         )
         self._fold_result_cache[cache_key] = fold_result
@@ -252,6 +254,7 @@ class EvaluationRunner:
     def _evaluate_holdout(self, spec: StrategySpec, preview: EvaluationPreview) -> FoldResult:
         train_bars = preview.data_slice.bars
         test_bars = preview.holdout_bars
+        warnings = self._quality_warnings(spec, test_bars)
         regime = self.registry.generate_regime(spec, train_bars, test_bars)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
@@ -271,7 +274,7 @@ class EvaluationRunner:
             metrics=metrics,
             baseline_metrics=baselines,
             baseline_deltas=baseline_deltas(metrics, baselines),
-            warnings=tuple(),
+            warnings=warnings,
             backtest=result,
         )
 
@@ -328,6 +331,21 @@ class EvaluationRunner:
         )
         self._data_slice_cache[cache_key] = data_slice
         return data_slice
+
+    def _quality_warnings(self, spec: StrategySpec, bars: tuple[MarketBar, ...]) -> tuple[str, ...]:
+        raw_warnings: tuple[str, ...] = tuple()
+        if bars and hasattr(self, "data_view"):
+            start_ms, end_ms = _raw_warning_bounds(bars)
+            raw_warnings = self.data_view.quality_warnings(
+                ticker=spec.instrument,
+                multiplier=spec.multiplier,
+                timespan=spec.timespan,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                regular_session_only=spec.exec_config.regular_session_only,
+            )
+        bar_warnings = validate_bars(bars)
+        return tuple(dict.fromkeys(raw_warnings + bar_warnings))
 
     def _split_research_and_holdout(
         self,
@@ -393,3 +411,27 @@ def _subtract_months(value: datetime, months: int) -> datetime:
         year -= 1
     day = min(value.day, monthrange(year, month)[1])
     return value.replace(year=year, month=month, day=day)
+
+
+def _raw_warning_bounds(bars: tuple[MarketBar, ...]) -> tuple[int, int]:
+    start_ms = bars[0].timestamp_ms
+    end_ms = bars[-1].timestamp_ms
+    first_local = bars[0].dt_local
+    last_local = bars[-1].dt_local
+    regular_start = time(9, 30)
+    regular_second = time(9, 31)
+    regular_penultimate = time(15, 58)
+    regular_last = time(15, 59)
+    if (
+        last_local.timetz().replace(tzinfo=None) == regular_last
+        and first_local.timetz().replace(tzinfo=None) == regular_second
+    ):
+        session_start = first_local.replace(hour=9, minute=30, second=0, microsecond=0)
+        start_ms = int(session_start.timestamp() * 1000)
+    if (
+        first_local.timetz().replace(tzinfo=None) == regular_start
+        and last_local.timetz().replace(tzinfo=None) == regular_penultimate
+    ):
+        session_end = last_local.replace(hour=15, minute=59, second=0, microsecond=0)
+        end_ms = int(session_end.timestamp() * 1000)
+    return start_ms, end_ms

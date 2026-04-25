@@ -118,9 +118,12 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Tracking: `ExperimentResult` and `LedgerEntry` now preserve an optional `holdout_result` separately from research `fold_results` and aggregate metrics; reports/artifact summaries display holdout metrics when present.
   - Verification: `.venv/bin/pytest tests/test_holdout.py tests/test_ledger.py tests/test_research_queue.py -q` passes 16 tests; `.venv/bin/pytest -q` passes 59 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Add data-quality validation before evaluation.
+- [x] Add data-quality validation before evaluation.
   - Detect missing bars, duplicate timestamps, null OHLC, OHLC sanity violations, volume anomalies, and unexpected session lengths.
   - Propagate warnings into `FoldResult.warnings`.
+  - Completed 2026-04-25: added evaluation data-quality warnings for raw null OHLC, duplicate timestamps, missing one-minute bars, OHLC sanity violations, null/invalid volume, and unexpected full-session lengths. Fold and holdout paths collect warnings before signal generation/backtesting, preserve them in `FoldResult.warnings`, serialize them, and render holdout warnings in reports.
+  - False-positive control: session-length checks only fire for sessions that appear to span the full regular session, and raw boundary expansion is limited to immediate missing first/last minute cases so partial folds do not inherit outside-session warnings.
+  - Verification: `.venv/bin/pytest tests/test_data_quality.py tests/test_ledger.py tests/test_holdout.py -q` passes 19 tests; `.venv/bin/pytest -q` passes 65 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Improve cost and fill assumptions for research.
   - Add commission per share.

@@ -247,6 +247,15 @@ def test_ledger_round_trip_preserves_holdout_result(tmp_path: Path) -> None:
     assert fetched.to_result().holdout_result.fold_id == "holdout"
 
 
+def test_report_renders_holdout_warnings() -> None:
+    result = _sample_result()
+    holdout = replace(result.fold_results[0], fold_id="holdout", warnings=("data_quality.missing_bars: gap",))
+    report = render_experiment_report(replace(result, holdout_result=holdout))
+
+    assert "## Holdout" in report
+    assert "Warnings: data_quality.missing_bars: gap" in report
+
+
 def test_top_experiments_ranks_from_scalar_columns_before_deserializing_winners(
     tmp_path: Path,
     monkeypatch,

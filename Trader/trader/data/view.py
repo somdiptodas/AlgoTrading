@@ -7,6 +7,7 @@ from typing import Iterable, Sequence
 
 from trader.data.models import MarketBar
 from trader.data.storage import SQLiteBarStore
+from trader.evaluation.data_quality import validate_raw_bar_rows
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,25 @@ class DataView:
             first_timestamp_utc=bars[0].timestamp_utc if bars else None,
             last_timestamp_utc=bars[-1].timestamp_utc if bars else None,
         )
+
+    def quality_warnings(
+        self,
+        ticker: str,
+        multiplier: int,
+        timespan: str,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+        *,
+        regular_session_only: bool = False,
+    ) -> tuple[str, ...]:
+        rows = self.store.fetch_bars(
+            ticker=ticker,
+            multiplier=multiplier,
+            timespan=timespan,
+            start_timestamp_ms=start_ms,
+            end_timestamp_ms=end_ms,
+        )
+        return validate_raw_bar_rows(rows, regular_session_only=regular_session_only)
 
     @staticmethod
     def snapshot_hash(bars: Sequence[MarketBar]) -> str:
