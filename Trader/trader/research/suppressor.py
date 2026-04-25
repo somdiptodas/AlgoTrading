@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
+from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import StrategySpec
 
 if TYPE_CHECKING:
@@ -30,7 +31,42 @@ if TYPE_CHECKING:
 # Shared distance function (also imported by candidates.py to avoid duplication)
 # ---------------------------------------------------------------------------
 
-def spec_distance(left: dict[str, object], right: dict[str, object]) -> float:
+@dataclass(frozen=True)
+class _ParamScale:
+    minimum: float
+    maximum: float
+    step: float
+
+    @property
+    def denominator(self) -> float:
+        return max(self.maximum - self.minimum, self.step, 1.0)
+
+
+def _parameter_scales(registry: Any) -> dict[str, dict[str, _ParamScale]]:
+    scales: dict[str, dict[str, _ParamScale]] = {}
+    for signal_name in registry.signal_handlers:
+        grid = registry.parameter_grid(signal_name)
+        keys = sorted({key for params in grid for key, value in params.items() if isinstance(value, (int, float))})
+        family_scales: dict[str, _ParamScale] = {}
+        for key in keys:
+            values = sorted({float(params[key]) for params in grid if isinstance(params.get(key), (int, float))})
+            positive_steps = [
+                right - left
+                for left, right in zip(values, values[1:])
+                if right > left
+            ]
+            step = min(positive_steps) if positive_steps else 1.0
+            family_scales[key] = _ParamScale(minimum=min(values), maximum=max(values), step=step)
+        scales[signal_name] = family_scales
+    return scales
+
+
+def spec_distance(
+    left: dict[str, object],
+    right: dict[str, object],
+    *,
+    parameter_scales: Mapping[str, _ParamScale] | None = None,
+) -> float:
     """
     Normalized parameter distance between two spec payloads in [0, 1].
 
@@ -41,18 +77,21 @@ def spec_distance(left: dict[str, object], right: dict[str, object]) -> float:
     right_signal = dict(right.get("signal", {}))
     if left_signal.get("name") != right_signal.get("name"):
         return 1.0
+    signal_name = str(left_signal.get("name"))
     left_params = dict(left_signal.get("params", {}))
     right_params = dict(right_signal.get("params", {}))
     keys = sorted(set(left_params) | set(right_params))
     if not keys:
         return 0.0
+    scales = parameter_scales or {}
     distance = 0.0
     for key in keys:
         lv = left_params.get(key)
         rv = right_params.get(key)
         if isinstance(lv, (int, float)) and isinstance(rv, (int, float)):
-            scale = max(abs(float(lv)), abs(float(rv)), 1.0)
-            distance += abs(float(lv) - float(rv)) / scale
+            scale = scales.get(key)
+            denominator = scale.denominator if scale is not None else max(abs(float(lv)), abs(float(rv)), 1.0)
+            distance += min(abs(float(lv) - float(rv)) / denominator, 1.0)
         else:
             distance += 0.0 if lv == rv else 1.0
     normalized = distance / len(keys)
@@ -69,6 +108,14 @@ _ROBUSTNESS_GATE_CHECKS = (
     "drawdown_pass",
     "regime_pass",
 )
+_FAILURE_CHECK_WEIGHTS = {
+    "neighborhood_pass": 1.0,
+    "fold_consistency_pass": 0.75,
+    "regime_pass": 0.6,
+    "drawdown_pass": 0.5,
+}
+_LARGE_SUPPRESSION_FAILURE_COUNT = 2
+_SINGLE_FAILURE_WEIGHT_MULTIPLIER = 0.5
 
 
 def _failed_gate_checks(entry: Any) -> tuple[str, ...]:
@@ -132,6 +179,7 @@ class RegionSuppressor:
         self,
         entries: Sequence[Any],  # Sequence[LedgerEntry] at type-check time
         *,
+        registry: Any = REGISTRY,
         radius: float = 0.15,
         weight_cap: float = 40.0,
     ) -> None:
@@ -141,6 +189,7 @@ class RegionSuppressor:
             raise ValueError("weight_cap must be >= 0")
         self.radius = radius
         self.weight_cap = weight_cap
+        self._parameter_scales_by_family = _parameter_scales(registry)
         self._failures: tuple[Any, ...] = tuple(
             entry for entry in entries if _is_robustness_failure(entry)
         )
@@ -171,25 +220,32 @@ class RegionSuppressor:
 
         nearest: Any | None = None
         nearest_dist = float("inf")
-        total_weight = 0.0
+        weighted_proximity = 0.0
         count_in_radius = 0
 
         for failure in same_family:
             dist = spec_distance(
                 candidate_payload,
                 failure.spec.to_payload(include_name=False),
+                parameter_scales=self._parameter_scales_by_family.get(spec.signal.name),
             )
             if dist < nearest_dist:
                 nearest_dist = dist
                 nearest = failure
             if dist < self.radius:
                 # Linear decay: full penalty at dist=0, zero at dist=radius
-                contribution = self.weight_cap * (1.0 - dist / self.radius)
-                total_weight += contribution
+                failure_weight = _failure_weight(_failed_gate_checks(failure))
+                weighted_proximity += failure_weight * (1.0 - dist / self.radius)
                 count_in_radius += 1
 
-        if nearest is None or total_weight == 0.0:
+        if nearest is None or weighted_proximity == 0.0:
             return None
+        repeat_multiplier = (
+            1.0
+            if count_in_radius >= _LARGE_SUPPRESSION_FAILURE_COUNT
+            else _SINGLE_FAILURE_WEIGHT_MULTIPLIER
+        )
+        total_weight = self.weight_cap * weighted_proximity * repeat_multiplier
 
         return SuppressedSpec(
             spec_hash=spec.spec_hash(),
@@ -218,3 +274,9 @@ class RegionSuppressor:
             "radius": self.radius,
             "weight_cap": self.weight_cap,
         }
+
+
+def _failure_weight(failed_check_names: Sequence[str]) -> float:
+    if not failed_check_names:
+        return 0.0
+    return max(_FAILURE_CHECK_WEIGHTS.get(name, 0.4) for name in failed_check_names)

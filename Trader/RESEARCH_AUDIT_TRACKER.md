@@ -160,10 +160,12 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added a named `--preview-factor` loop cap and a cheap pre-preview ranking pass in `DeterministicCandidateQueue` using existing family history, parent score, generator kind, novelty, and required-history signals. The queue now caps preview creation while continuing to scan evaluation keys so duplicate accounting remains uncapped.
   - Verification: `.venv/bin/pytest tests/test_loop_cmd.py tests/test_research_queue.py -q` passes 10 tests; `.venv/bin/pytest -q` passes 80 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Fix suppressor geometry.
+- [x] Fix suppressor geometry.
   - Normalize parameter distances by registry-known min/max ranges or grid steps.
   - Weight failure types differently.
   - Require repeated nearby failures before applying large suppression.
+  - Completed 2026-04-25: `RegionSuppressor` now uses registry-derived per-family parameter ranges/steps for suppression distance while leaving candidate novelty/diversity distance semantics unchanged. Suppression weights now vary by failed gate type, and single nearby failures receive only a small penalty while repeated nearby failures can reach the cap.
+  - Verification: `.venv/bin/pytest tests/test_suppressor.py tests/test_research_queue.py tests/test_loop_cmd.py -q` passes 15 tests; `.venv/bin/pytest -q` passes 85 tests. Verification subagent reported no blockers.
 
 - [ ] Separate suppression audit types.
   - Distinguish selected/evaluated suppression decisions from discarded preview noise.

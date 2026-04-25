@@ -104,6 +104,7 @@ def main(argv: list[str] | None = None) -> None:
     # --- Build suppressor from history entries that failed robustness gates ---
     suppressor = RegionSuppressor(
         history_entries,
+        registry=REGISTRY,
         radius=args.suppressor_radius,
         weight_cap=args.suppressor_weight_cap,
     )
