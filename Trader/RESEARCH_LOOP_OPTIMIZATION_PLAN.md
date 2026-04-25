@@ -294,7 +294,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: Added a curated `composite_grid` planner path with six canonical recipes and three deterministic variants each, split into per-recipe buckets so the default loop budget reaches every recipe before raw grid expansion; `--signal-family composite` is now accepted and `composite.parameter_grid()` remains empty to avoid a full cross-product.
   - Verification: focused planner/composite/loop tests passed (`.venv/bin/pytest -q tests/test_planner.py tests/test_composite_signal.py tests/test_loop_cmd.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
-- [ ] **Replace family-quota boost with a UCB bandit allocator** (S2) keyed on per-family best-return and evaluation count.
+- [x] **Replace family-quota boost with a UCB bandit allocator** (S2) keyed on per-family best-return and evaluation count.
+  - Completed: 2026-04-25
+  - Implementation: Replaced count-gap quota and family-quality scoring with a deterministic family UCB score based on best historical `return_pct` and evaluation count; cheap preview ordering and final candidate allocation both use virtual same-batch counts so preview budget and selected batches are allocated by the bandit score.
+  - Verification: focused queue tests passed (`.venv/bin/pytest -q tests/test_research_queue.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
 - [ ] **Optuna/TPE sampler per family after seed grid is exhausted** (S2). Ledger-return as objective; persist study state in `data/research/optuna/`.
 - [ ] **Add information ratio metric** vs B&H per-trading-day (V2). Promotion gate: `IR > 0.5` *and* exposure-adjusted delta > 0.
 - [ ] **Block-bootstrap p-value baseline** replacing single random-entry (S9, V5). 500 daily-block resamples; report `p_value_vs_random_entry`.

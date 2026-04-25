@@ -70,6 +70,35 @@ def _spec(name: str, signal_name: str, params: dict[str, int | float]) -> Strate
     )
 
 
+def _entry(
+    experiment_id: str,
+    spec: StrategySpec,
+    *,
+    return_pct: float,
+    critique: dict[str, object] | None = None,
+) -> LedgerEntry:
+    return LedgerEntry(
+        experiment_id=experiment_id,
+        evaluation_key=f"{experiment_id}_key",
+        status="completed",
+        spec=spec,
+        spec_hash=spec.spec_hash(),
+        data_snapshot_id="snapshot",
+        split_plan_id="split",
+        cost_model_id="cost",
+        aggregate_metrics={
+            "return_pct": return_pct,
+            "sharpe_like": 0.0,
+            "max_drawdown_pct": 0.0,
+        },
+        fold_results=(),
+        robustness_checks={},
+        promotion_stage="exploratory",
+        critique=critique,
+        completed_at_utc="2026-01-01T00:00:00+00:00",
+    )
+
+
 def test_candidate_queue_skips_existing_evaluation_keys_before_preview(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "market.db"
     _seed_db(db_path)
@@ -226,25 +255,14 @@ def test_candidate_queue_prefers_underexplored_family_when_scores_are_close(tmp_
     db_path = tmp_path / "market.db"
     _seed_db(db_path)
     runner = EvaluationRunner(DataView(db_path), REGISTRY)
-    ledger = LedgerStore(tmp_path / "ledger.db")
-    ledger.initialize()
-
-    # Seed history with multiple EMA runs so breakout receives an exploration boost.
-    for index in range(3):
-        preview = runner.preview_walk_forward(
-            _spec(
-                f"ema_seed_{index}",
-                "ema_cross",
-                {"fast_length": 8 + (index * 2), "slow_length": 55, "signal_buffer_bps": 0.0},
-            ),
-            num_folds=3,
-            embargo_bars=1,
-        )
-        ledger.record_result(runner.evaluate_preview(preview), artifact_paths={}, generator_kind="grid")
-
+    ema_history = _spec("ema_history", "ema_cross", {"fast_length": 8, "slow_length": 34, "signal_buffer_bps": 0.0})
     queue = DeterministicCandidateQueue(
-        history_entries=ledger.list_completed(limit=100),
-        frontier_entries=ledger.top_experiments(limit=10),
+        history_entries=(
+            _entry("ema_1", ema_history, return_pct=1.0),
+            _entry("ema_2", ema_history, return_pct=1.0),
+            _entry("ema_3", ema_history, return_pct=1.0),
+        ),
+        frontier_entries=(),
     )
     queue_result = queue.build(
         planned_specs=(
@@ -264,6 +282,113 @@ def test_candidate_queue_prefers_underexplored_family_when_scores_are_close(tmp_
 
     assert len(queue_result.selected) == 2
     assert queue_result.selected[0].family == "breakout"
+
+
+def test_candidate_queue_ucb_uses_best_return_when_family_counts_match(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    ema_history = _spec("ema_history", "ema_cross", {"fast_length": 8, "slow_length": 34, "signal_buffer_bps": 0.0})
+    breakout_history = _spec("breakout_history", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0})
+    queue = DeterministicCandidateQueue(
+        history_entries=(
+            _entry("ema_winner", ema_history, return_pct=5.0),
+            _entry("breakout_loser", breakout_history, return_pct=-1.0),
+        ),
+        frontier_entries=(),
+    )
+
+    queue_result = queue.build(
+        planned_specs=(
+            PlannedSpec(
+                _spec("ema_candidate", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+            PlannedSpec(
+                _spec("breakout_candidate", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+        ),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+        max_preview_count=1,
+    )
+
+    assert queue_result.previewed_count == 1
+    assert queue_result.selected[0].family == "ema_cross"
+
+
+def test_candidate_queue_ucb_prefers_uncertain_family_when_returns_are_close(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    ema_history = _spec("ema_history", "ema_cross", {"fast_length": 8, "slow_length": 34, "signal_buffer_bps": 0.0})
+    breakout_history = _spec("breakout_history", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0})
+    queue = DeterministicCandidateQueue(
+        history_entries=(
+            _entry("ema_1", ema_history, return_pct=1.0),
+            _entry("ema_2", ema_history, return_pct=1.0),
+            _entry("ema_3", ema_history, return_pct=1.0),
+            _entry("breakout_1", breakout_history, return_pct=1.0),
+        ),
+        frontier_entries=(),
+    )
+
+    queue_result = queue.build(
+        planned_specs=(
+            PlannedSpec(
+                _spec("ema_candidate", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+            PlannedSpec(
+                _spec("breakout_candidate", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+        ),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+        max_preview_count=1,
+    )
+
+    assert queue_result.previewed_count == 1
+    assert queue_result.selected[0].family == "breakout"
+
+
+def test_candidate_queue_preview_budget_uses_virtual_ucb_counts(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    queue = DeterministicCandidateQueue(history_entries=(), frontier_entries=())
+
+    queue_result = queue.build(
+        planned_specs=(
+            PlannedSpec(
+                _spec("ema_one", "ema_cross", {"fast_length": 8, "slow_length": 34, "signal_buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+            PlannedSpec(
+                _spec("ema_two", "ema_cross", {"fast_length": 12, "slow_length": 55, "signal_buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+            PlannedSpec(
+                _spec("ema_three", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+            PlannedSpec(
+                _spec("breakout_one", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+        ),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+        max_preview_count=2,
+    )
+
+    assert queue_result.previewed_count == 2
+    assert {candidate.family for candidate in queue_result.selected} == {"ema_cross", "breakout"}
 
 
 def test_candidate_queue_limits_previews_after_cheap_ranking(tmp_path: Path) -> None:
@@ -326,17 +451,11 @@ def test_candidate_queue_applies_critic_planning_penalties(tmp_path: Path) -> No
     db_path = tmp_path / "market.db"
     _seed_db(db_path)
     runner = EvaluationRunner(DataView(db_path), REGISTRY)
-    preview = runner.preview_walk_forward(
-        _spec("ema_history", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
-        num_folds=3,
-        embargo_bars=1,
-    )
-    result = runner.evaluate_preview(preview, include_robustness=False)
-    penalized_entry = LedgerEntry.from_result(
-        result,
-        evaluation_key="penalized_key",
-        artifact_paths={},
-        generator_kind="grid",
+    ema_history = _spec("ema_history", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0})
+    penalized_entry = _entry(
+        "penalized_ema",
+        ema_history,
+        return_pct=1.0,
         critique={"planning_penalties": {"benchmark_failure": 25.0}},
     )
     queue = DeterministicCandidateQueue(history_entries=(penalized_entry,), frontier_entries=())

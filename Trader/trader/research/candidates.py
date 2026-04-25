@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import log, sqrt
 from time import perf_counter
 from typing import Iterable, Sequence
 
@@ -10,6 +11,11 @@ from trader.research.critic import planning_penalty_from_critique
 from trader.research.planner import PlannedSpec
 from trader.research.suppressor import RegionSuppressor, SuppressedSpec, spec_distance
 from trader.strategies.spec import StrategySpec
+
+
+_UCB_RETURN_WEIGHT = 4.0
+_UCB_EXPLORATION_WEIGHT = 12.0
+_UNEXPLORED_FAMILY_UCB_SCORE = 30.0
 
 
 @dataclass(frozen=True)
@@ -45,7 +51,6 @@ class DeterministicCandidateQueue:
         self._history_by_family = self._group_by_family(self.history_entries)
         self._frontier_by_id = {entry.experiment_id: entry for entry in self.frontier_entries}
         self._family_counts = {family: len(entries) for family, entries in self._history_by_family.items()}
-        self._max_family_count = max(self._family_counts.values(), default=0)
         self._critic_penalty_by_family = {
             family: self._critic_penalty(entries) for family, entries in self._history_by_family.items()
         }
@@ -145,16 +150,58 @@ class DeterministicCandidateQueue:
         planned_specs: Sequence[PlannedSpec],
         runner: EvaluationRunner,
     ) -> tuple[PlannedSpec, ...]:
-        return tuple(
-            sorted(
-                planned_specs,
-                key=lambda planned: (
-                    self._cheap_score(planned, runner),
-                    planned.spec.spec_hash(),
-                ),
-                reverse=True,
-            )
-        )
+        grouped: dict[str, list[tuple[PlannedSpec, float]]] = {}
+        for planned in planned_specs:
+            family = self._planned_family(planned, runner)
+            grouped.setdefault(family, []).append((planned, self._cheap_score(planned, runner)))
+        family_order = {family: index for index, family in enumerate(sorted(grouped))}
+        selected_counts_by_family: dict[str, int] = {}
+        ranked: list[PlannedSpec] = []
+        while any(grouped.values()):
+            best_family: str | None = None
+            best_index = 0
+            best_score: float | None = None
+            for family, family_plans in grouped.items():
+                if not family_plans:
+                    continue
+                base_family_score = self._family_ucb_score(family)
+                virtual_family_score = self._family_ucb_score(
+                    family,
+                    selected_count=selected_counts_by_family.get(family, 0),
+                    total_selected_count=len(ranked),
+                )
+                for index, (planned, static_score) in enumerate(family_plans):
+                    total_score = static_score - base_family_score + virtual_family_score
+                    if (
+                        best_score is None
+                        or total_score > best_score
+                        or (
+                            total_score == best_score
+                            and (
+                                family_order[family],
+                                planned.spec.spec_hash(),
+                            )
+                            < (
+                                family_order[best_family or family],
+                                grouped[best_family or family][best_index][0].spec.spec_hash(),
+                            )
+                        )
+                    ):
+                        best_score = total_score
+                        best_family = family
+                        best_index = index
+            if best_family is None:
+                break
+            planned, _ = grouped[best_family].pop(best_index)
+            ranked.append(planned)
+            selected_counts_by_family[best_family] = selected_counts_by_family.get(best_family, 0) + 1
+        return tuple(ranked)
+
+    def _planned_family(self, planned: PlannedSpec, runner: EvaluationRunner) -> str:
+        try:
+            return runner.registry.validate_spec(planned.spec).signal.name
+        except ValueError:
+            return planned.spec.signal.name
 
     def _cheap_score(self, planned: PlannedSpec, runner: EvaluationRunner) -> float:
         try:
@@ -162,14 +209,11 @@ class DeterministicCandidateQueue:
             required_history = runner.registry.required_history(spec)
         except ValueError:
             return float("-inf")
-        family_count = self._family_counts.get(spec.signal.name, 0)
-        family_quota_boost = float(self._max_family_count - family_count)
         generator_boost = 25.0 if planned.generator_kind == "frontier_neighborhood" else 0.0
         simplicity_boost = max(0.0, 20.0 - (required_history / 10.0))
         return (
             generator_boost
-            + (family_quota_boost * 3.0)
-            + self._family_quality(spec.signal.name)
+            + self._family_ucb_score(spec.signal.name)
             + (self._parent_score(planned) * 0.25)
             + (self._novelty_to_history_spec(spec) * 10.0)
             + simplicity_boost
@@ -192,29 +236,39 @@ class DeterministicCandidateQueue:
 
         selected: list[ScoredCandidate] = []
         selected_specs_by_family: dict[str, list[ScoredCandidate]] = {}
-        families = sorted(grouped)
+        selected_counts_by_family: dict[str, int] = {}
+        family_order = {family: index for index, family in enumerate(sorted(grouped))}
 
-        # Deterministic round-robin keeps batches mixed across families when multiple are available.
-        while any(grouped.get(family) for family in families):
-            made_progress = False
-            for family in families:
-                family_candidates = grouped.get(family, [])
+        while any(grouped.values()):
+            best_family: str | None = None
+            best_index = 0
+            best_score: float | None = None
+            for family, family_candidates in grouped.items():
                 if not family_candidates:
                     continue
-                best_index = 0
-                best_score: float | None = None
+                base_family_score = self._family_ucb_score(family)
+                virtual_family_score = self._family_ucb_score(
+                    family,
+                    selected_count=selected_counts_by_family.get(family, 0),
+                    total_selected_count=len(selected),
+                )
                 for index, candidate in enumerate(family_candidates):
                     diversity_bonus = self._diversity_bonus(candidate, selected_specs_by_family.get(family, ()))
-                    total_score = candidate.static_score + diversity_bonus
-                    if best_score is None or total_score > best_score:
+                    total_score = candidate.static_score - base_family_score + virtual_family_score + diversity_bonus
+                    if (
+                        best_score is None
+                        or total_score > best_score
+                        or (total_score == best_score and family_order[family] < family_order[best_family or family])
+                    ):
                         best_score = total_score
+                        best_family = family
                         best_index = index
-                chosen = family_candidates.pop(best_index)
-                selected.append(chosen)
-                selected_specs_by_family.setdefault(family, []).append(chosen)
-                made_progress = True
-            if not made_progress:
+            if best_family is None:
                 break
+            chosen = grouped[best_family].pop(best_index)
+            selected.append(chosen)
+            selected_specs_by_family.setdefault(best_family, []).append(chosen)
+            selected_counts_by_family[best_family] = selected_counts_by_family.get(best_family, 0) + 1
         return tuple(selected)
 
     def _static_score(
@@ -225,16 +279,12 @@ class DeterministicCandidateQueue:
         parent_score: float,
         suppression_record: SuppressedSpec | None = None,
     ) -> float:
-        family_count = self._family_counts.get(preview.spec.signal.name, 0)
-        family_quota_boost = float(self._max_family_count - family_count)
-        family_quality = self._family_quality(preview.spec.signal.name)
         generator_boost = 25.0 if planned.generator_kind == "frontier_neighborhood" else 0.0
         simplicity_boost = max(0.0, 20.0 - (preview.required_history / 10.0))
         suppression_penalty = suppression_record.suppression_weight if suppression_record is not None else 0.0
         return (
             generator_boost
-            + (family_quota_boost * 3.0)
-            + family_quality
+            + self._family_ucb_score(preview.spec.signal.name)
             + (parent_score * 0.25)
             + (novelty * 10.0)
             + simplicity_boost
@@ -242,23 +292,16 @@ class DeterministicCandidateQueue:
             - self._critic_penalty_by_family.get(preview.spec.signal.name, 0.0)
         )
 
-    def _family_quality(self, family: str) -> float:
+    def _family_ucb_score(self, family: str, *, selected_count: int = 0, total_selected_count: int = 0) -> float:
         entries = self._history_by_family.get(family, ())
-        if not entries:
-            return 0.0
-        best = max(
-            entries,
-            key=lambda entry: (
-                entry.metric("sharpe_like"),
-                entry.metric("return_pct"),
-                -entry.metric("max_drawdown_pct"),
-            ),
-        )
-        return (
-            max(best.metric("sharpe_like"), 0.0) * 30.0
-            + best.metric("return_pct") * 4.0
-            - best.metric("max_drawdown_pct")
-        )
+        history_count = self._family_counts.get(family, 0)
+        effective_count = history_count + selected_count
+        if effective_count == 0:
+            return _UNEXPLORED_FAMILY_UCB_SCORE
+        total_count = max(len(self.history_entries) + total_selected_count, 2)
+        best_return = max((entry.metric("return_pct") for entry in entries), default=0.0)
+        exploration = sqrt(log(total_count) / effective_count)
+        return (best_return * _UCB_RETURN_WEIGHT) + (exploration * _UCB_EXPLORATION_WEIGHT)
 
     def _parent_score(self, planned: PlannedSpec) -> float:
         if not planned.parent_experiment_ids:
