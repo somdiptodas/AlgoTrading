@@ -120,17 +120,12 @@ class EvaluationRunner:
         fold_results = tuple(self._evaluate_fold(preview.spec, fold, preview.data_slice.bars) for fold in preview.folds)
         aggregate_metrics = aggregate_metric_dicts([fold.metrics | fold.baseline_deltas for fold in fold_results])
         experiment_id = experiment_id or sha256(preview.evaluation_key.encode("utf-8")).hexdigest()[:16]
-        full_test_bars = tuple(
-            bar
-            for fold in preview.folds
-            for bar in preview.data_slice.bars[fold.test_start_idx : fold.test_end_idx + 1]
-        )
         robustness = (
             assess_robustness(
                 spec=preview.spec,
                 aggregate_metrics=aggregate_metrics,
                 fold_metrics=[fold.metrics for fold in fold_results],
-                full_test_bars=full_test_bars,
+                fold_backtests=[fold.backtest for fold in fold_results],
                 registry=self.registry,
                 neighbor_metric_fn=lambda neighbor_spec: self._evaluate_fold(
                     neighbor_spec,

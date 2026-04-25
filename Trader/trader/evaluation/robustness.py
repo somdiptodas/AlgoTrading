@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from statistics import mean, median
-from typing import Callable, Sequence
+from typing import Callable, Iterable, Sequence
 
-from trader.data.models import MarketBar
+from trader.data.models import NEW_YORK
+from trader.execution.engine import BacktestResult
 from trader.strategies.registry import StrategyRegistry
 from trader.strategies.spec import StrategySpec
+
+
+MONTHLY_PNL_CONCENTRATION_LIMIT_PCT = 80.0
 
 
 @dataclass(frozen=True)
@@ -20,14 +26,23 @@ def assess_robustness(
     spec: StrategySpec,
     aggregate_metrics: dict[str, float],
     fold_metrics: Sequence[dict[str, float]],
-    full_test_bars: tuple[MarketBar, ...],
+    fold_backtests: Sequence[BacktestResult],
     registry: StrategyRegistry,
     neighbor_metric_fn: Callable[[StrategySpec], dict[str, float]],
 ) -> RobustnessResult:
     fold_returns = [metrics["return_pct"] for metrics in fold_metrics]
     positive_fold_ratio = sum(1 for value in fold_returns if value > 0) / max(len(fold_returns), 1)
-    monthly_returns = _monthly_return_breakdown(full_test_bars)
-    monthly_concentration = max((abs(value) for value in monthly_returns.values()), default=0.0)
+    monthly_pnl = _monthly_strategy_pnl_breakdown(fold_backtests)
+    positive_monthly_concentration = _monthly_concentration_pct(
+        (value for value in monthly_pnl.values() if value > 0),
+        no_positive_value=100.0,
+    )
+    loss_monthly_concentration = _monthly_concentration_pct(
+        -value for value in monthly_pnl.values() if value < 0
+    )
+    monthly_concentration = max(positive_monthly_concentration, loss_monthly_concentration)
+    positive_pnl_present = any(value > 0 for value in monthly_pnl.values())
+    regime_pass = positive_pnl_present and monthly_concentration <= MONTHLY_PNL_CONCENTRATION_LIMIT_PCT
     neighborhood_returns: list[float] = []
     neighborhood_sharpes: list[float] = []
     for neighbor_spec in registry.neighbors(spec)[:6]:
@@ -51,7 +66,11 @@ def assess_robustness(
         "positive_fold_ratio": positive_fold_ratio,
         "fold_consistency_pass": positive_fold_ratio >= 0.5,
         "monthly_concentration_pct": monthly_concentration,
-        "regime_pass": monthly_concentration < 15.0,
+        "positive_monthly_pnl_concentration_pct": positive_monthly_concentration,
+        "loss_monthly_pnl_concentration_pct": loss_monthly_concentration,
+        "positive_monthly_pnl_present": positive_pnl_present,
+        "monthly_pnl_month_count": float(len(monthly_pnl)),
+        "regime_pass": regime_pass,
         "neighborhood_median_return_pct": neighborhood_return_median,
         "neighborhood_gap_pct": neighborhood_return_gap,  # kept for backward compat
         "neighborhood_return_gap_pct": neighborhood_return_gap,
@@ -64,18 +83,24 @@ def assess_robustness(
     return RobustnessResult(checks=checks, passed=passed)
 
 
-def _monthly_return_breakdown(bars: Sequence[MarketBar]) -> dict[str, float]:
-    if len(bars) < 2:
-        return {}
-    by_month: dict[str, list[MarketBar]] = {}
-    for bar in bars:
-        key = bar.dt_local.strftime("%Y-%m")
-        by_month.setdefault(key, []).append(bar)
-    monthly_returns: dict[str, float] = {}
-    for key, month_bars in by_month.items():
-        start_close = month_bars[0].close
-        if start_close == 0:
-            monthly_returns[key] = 0.0
-        else:
-            monthly_returns[key] = ((month_bars[-1].close / start_close) - 1.0) * 100.0
-    return monthly_returns
+def _monthly_strategy_pnl_breakdown(backtests: Sequence[BacktestResult]) -> dict[str, float]:
+    monthly_pnl: defaultdict[str, float] = defaultdict(float)
+    for backtest in backtests:
+        for trade in backtest.trades:
+            monthly_pnl[_trade_exit_month(trade.exit_timestamp_utc)] += trade.pnl_cash
+    return dict(sorted(monthly_pnl.items()))
+
+
+def _trade_exit_month(timestamp_utc: str) -> str:
+    timestamp = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
+    if timestamp.tzinfo is None:
+        return timestamp.strftime("%Y-%m")
+    return timestamp.astimezone(NEW_YORK).strftime("%Y-%m")
+
+
+def _monthly_concentration_pct(monthly_values: Iterable[float], *, no_positive_value: float = 0.0) -> float:
+    values = tuple(value for value in monthly_values if value > 0)
+    total = sum(values)
+    if total <= 0:
+        return no_positive_value
+    return (max(values) / total) * 100.0

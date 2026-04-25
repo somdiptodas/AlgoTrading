@@ -14,14 +14,14 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 - Best observed absolute return: about +2.11%, still about -10.63 percentage points behind buy-and-hold.
 - Research storage size: about 7.0 GB total, including 4.8 GB artifacts and 2.2 GB `ledger.db`.
 - Ledger JSON payload size: about 2.24 GB total, averaging about 31 MB per ledger row.
-- Test status: `.venv/bin/pytest -q` passes 13 tests as of 2026-04-25 after pinning the legacy EMA regression to a fixed characterization window.
+- Test status: `.venv/bin/pytest -q` passes 18 tests as of 2026-04-25 after adding strategy-specific monthly PnL concentration coverage.
 
 ## Verification Of Claude Audit
 
 ### Confirmed
 
 - No strategy has reached `candidate`; all 72 completed experiments lag buy-and-hold.
-- `regime_pass` currently uses raw SPY monthly close-to-close returns, not strategy PnL or equity returns.
+- Before the 2026-04-25 fix, `regime_pass` used raw SPY monthly close-to-close returns, not strategy PnL or equity returns.
 - Suppressor distance is parameter-scale biased because it normalizes by `max(abs(left), abs(right), 1)`, not known parameter ranges or grid step sizes. The current suppression log shows RSI has much higher average suppression weight than EMA or breakout.
 - Aggregate metrics are simple unweighted means across folds.
 - `sharpe_like` is not a conventional annualized Sharpe ratio.
@@ -37,7 +37,7 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 ### Adjusted
 
 - The failing regression currently sees `194,316` regular-session bars, not `194,423`.
-- `regime_pass` may vary across specs when different required history changes the fold/test slices, but it is still a market-data property rather than a strategy-performance property.
+- Before the 2026-04-25 fix, `regime_pass` could vary across specs when different required history changed the fold/test slices, but it was still a market-data property rather than a strategy-performance property.
 - The proposed annualized Sharpe fix should be computed from per-bar returns directly. Do not implement it as `sharpe_like * sqrt(252 * 390)`, because current `sharpe_like` already multiplies by `sqrt(N)` for the observed fold/window length.
 - "Promotion bar too hard" is plausible, but the immediate issue is not just threshold strictness. The current search space has weak hypotheses, the robustness gates are flawed, and benchmark selection needs refinement.
 
@@ -49,9 +49,12 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: pinned the legacy EMA regression to the `2025-10-21` through `2026-04-20` New York session window, preserving the characterized `48,002` bars, `391` trades, and `$94,959.18` final cash.
   - Verification: `.venv/bin/pytest -q` passes 13 tests.
 
-- [ ] Replace `regime_pass` with a strategy-specific concentration check.
+- [x] Replace `regime_pass` with a strategy-specific concentration check.
   - Use strategy returns, equity deltas, or trade PnL by calendar month.
   - Example gate: fail if one month contributes more than 80% of total positive PnL or if one month dominates drawdown.
+  - Completed 2026-04-25: `regime_pass` now uses realized strategy trade PnL by New York calendar month instead of SPY close-to-close market returns. The gate fails when positive PnL is unavailable, when one month contributes more than 80% of total positive PnL, or when one month contributes more than 80% of realized loss PnL.
+  - Compatibility: kept `regime_pass` and `monthly_concentration_pct`; added explicit positive/loss monthly PnL concentration fields for reports and ledger payloads.
+  - Verification: `.venv/bin/pytest -q` passes 18 tests.
 
 - [ ] Evaluate robustness neighbors across the same full walk-forward plan.
   - Current behavior compares aggregate candidate metrics against neighbors evaluated only on fold 1.
@@ -196,7 +199,7 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
 
 1. Fix the broken regression test.
 2. Sanitize metric serialization and compact ledger/artifact payloads.
-3. Fix `regime_pass`, neighbor robustness, and fold aggregation.
+3. Fix neighbor robustness and fold aggregation.
 4. Tighten promotion semantics and add fair intraday baselines.
 5. Add explicit planner allocation, early dedupe, and bounded previews.
 6. Fix suppressor distance scaling.
