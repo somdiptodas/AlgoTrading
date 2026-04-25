@@ -6,12 +6,12 @@ from typing import Callable
 
 from trader.data.models import MarketBar
 from trader.strategies.filters import regime, session
-from trader.strategies.signals import breakout, ema_cross, rsi_reversion, vwap_deviation
+from trader.strategies.signals import breakout, composite, ema_cross, rsi_reversion, vwap_deviation
 from trader.strategies.sizers import fixed_fraction, full_notional
-from trader.strategies.spec import FilterSpec, SignalSpec, StrategySpec
+from trader.strategies.spec import FilterSpec, ParamValue, SignalSpec, StrategySpec
 
 
-SignalGenerator = Callable[[tuple[MarketBar, ...], tuple[MarketBar, ...], dict[str, int | float]], list[bool]]
+SignalGenerator = Callable[[tuple[MarketBar, ...], tuple[MarketBar, ...], dict[str, ParamValue]], list[bool]]
 
 
 class StrategyRegistry:
@@ -44,6 +44,13 @@ class StrategyRegistry:
                 "generate_regime": vwap_deviation.generate_regime,
                 "parameter_grid": vwap_deviation.parameter_grid,
                 "neighbors": vwap_deviation.neighbors,
+            },
+            "composite": {
+                "normalize_params": composite.normalize_params,
+                "required_history": composite.required_history,
+                "generate_regime": composite.generate_regime,
+                "parameter_grid": composite.parameter_grid,
+                "neighbors": composite.neighbors,
             },
         }
         self.sizing_handlers = {

@@ -282,7 +282,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
 
 ### P1 — make the loop a real ensemble factory
 
-- [ ] **Add `composite` signal handler** with `all` / `any` / `vote_k_of_n` / `primary_plus_confirmations` combiners (M1, M2). Reuse child signals as-is.
+- [x] **Add `composite` signal handler** with `all` / `any` / `vote_k_of_n` / `primary_plus_confirmations` combiners (M1, M2). Reuse child signals as-is.
+  - Completed: 2026-04-25
+  - Implementation: Added a first-class `composite` signal handler that normalizes 2-4 child signal payloads, combines existing child regimes with deterministic `all`, `any`, `vote_k_of_n`, and `primary_plus_confirmations` modes, reports max child required history, and emits bounded one-child-at-a-time robustness neighbors.
+  - Verification: focused composite/registry/leakage tests passed (`.venv/bin/pytest -q tests/test_composite_signal.py tests/test_splits_metrics_registry.py tests/test_leakage.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
 - [ ] **Composite leakage tests** (M6) by transitively asserting children's leakage tests still hold under composition.
 - [ ] **Composite planner bucket** with the 6 canonical composites in M5 (NOT a full cross-product). Cap composite specs at ~24 per loop.
 - [ ] **Replace family-quota boost with a UCB bandit allocator** (S2) keyed on per-family best-return and evaluation count.

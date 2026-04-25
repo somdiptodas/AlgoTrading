@@ -7,12 +7,13 @@ from typing import Literal
 
 
 Scalar = int | float | str | bool
+ParamValue = Scalar | list["ParamValue"] | dict[str, "ParamValue"]
 
 
 @dataclass(frozen=True)
 class SignalSpec:
     name: str
-    params: dict[str, Scalar] = field(default_factory=dict)
+    params: dict[str, ParamValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
