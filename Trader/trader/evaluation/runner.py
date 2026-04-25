@@ -8,7 +8,15 @@ from typing import Sequence
 
 from trader.data.models import MarketBar
 from trader.data.view import DataSlice, DataView
-from trader.evaluation.baselines import baseline_deltas, evaluate_baselines
+from trader.evaluation.baselines import (
+    always_flat,
+    baseline_deltas,
+    buy_and_hold,
+    evaluate_baselines,
+    randomized_entry_same_exposure,
+    regular_session_open_to_close_long,
+    session_long_flat_at_close,
+)
 from trader.evaluation.data_quality import validate_bars
 from trader.evaluation.metrics import aggregate_metric_dicts, annualized_sharpe_for_backtests, calculate_metrics
 from trader.evaluation.promotion import promotion_stage
@@ -77,6 +85,7 @@ class EvaluationRunner:
         self._data_slice_cache: dict[tuple[object, ...], DataSlice] = {}
         self._split_cache: dict[tuple[str, int, int, int], tuple[str, tuple[Fold, ...]]] = {}
         self._fold_result_cache: dict[tuple[str, str, str, str, int], FoldResult] = {}
+        self._baseline_cache: dict[tuple[object, ...], dict[str, dict[str, float]]] = {}
 
     def evaluate_single_window(
         self,
@@ -332,9 +341,17 @@ class EvaluationRunner:
             reasons.append("exposure")
         return tuple(reasons)
 
-    def _evaluate_fold(self, spec: StrategySpec, fold: Fold, bars: tuple[MarketBar, ...]) -> FoldResult:
+    def _evaluate_fold(
+        self,
+        spec: StrategySpec,
+        fold: Fold,
+        bars: tuple[MarketBar, ...],
+        *,
+        data_snapshot_id: str | None = None,
+    ) -> FoldResult:
         cache_key = (
             spec.spec_hash(),
+            data_snapshot_id,
             fold.fold_id,
             fold.train_start_utc,
             fold.test_end_utc,
@@ -350,11 +367,12 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
-        baselines = evaluate_baselines(
+        baselines = self._evaluate_baselines(
+            spec,
+            fold,
             test_bars,
-            spec.exec_config,
-            strategy_trades=result.trades,
-            seed_material=f"{spec.spec_hash()}|{fold.fold_id}|{fold.test_start_utc}|{fold.test_end_utc}",
+            result.trades,
+            data_snapshot_id=data_snapshot_id,
         )
         fold_result = FoldResult(
             fold_id=fold.fold_id,
@@ -370,6 +388,60 @@ class EvaluationRunner:
         )
         self._fold_result_cache[cache_key] = fold_result
         return fold_result
+
+    def _evaluate_baselines(
+        self,
+        spec: StrategySpec,
+        fold: Fold,
+        test_bars: tuple[MarketBar, ...],
+        strategy_trades: tuple,
+        data_snapshot_id: str | None = None,
+    ) -> dict[str, dict[str, float]]:
+        fixed_baselines = {
+            name: dict(metrics)
+            for name, metrics in self._fixed_baselines(
+                spec,
+                fold,
+                test_bars,
+                data_snapshot_id=data_snapshot_id,
+            ).items()
+        }
+        fixed_baselines["randomized_entry_same_exposure"] = randomized_entry_same_exposure(
+            test_bars,
+            spec.exec_config,
+            strategy_trades,
+            seed_material=f"{spec.spec_hash()}|{fold.fold_id}|{fold.test_start_utc}|{fold.test_end_utc}",
+        )
+        return fixed_baselines
+
+    def _fixed_baselines(
+        self,
+        spec: StrategySpec,
+        fold: Fold,
+        test_bars: tuple[MarketBar, ...],
+        data_snapshot_id: str | None = None,
+    ) -> dict[str, dict[str, float]]:
+        if not hasattr(self, "_baseline_cache"):
+            self._baseline_cache = {}
+        cache_key = (
+            data_snapshot_id,
+            fold.fold_id,
+            fold.test_start_utc,
+            fold.test_end_utc,
+            len(test_bars),
+            spec.exec_config.cost_model_id(),
+        )
+        cached = self._baseline_cache.get(cache_key)
+        if cached is not None:
+            return {name: dict(metrics) for name, metrics in cached.items()}
+        baselines = {
+            "always_flat": always_flat(spec.exec_config.initial_cash),
+            "buy_and_hold": buy_and_hold(test_bars, spec.exec_config.initial_cash),
+            "regular_session_open_to_close_long": regular_session_open_to_close_long(test_bars, spec.exec_config),
+            "session_long_flat_at_close": session_long_flat_at_close(test_bars, spec.exec_config),
+        }
+        self._baseline_cache[cache_key] = baselines
+        return {name: dict(metrics) for name, metrics in baselines.items()}
 
     def _add_cost_scenario_metrics(
         self,
@@ -455,7 +527,15 @@ class EvaluationRunner:
         spec: StrategySpec,
         preview: EvaluationPreview,
     ) -> tuple[tuple[FoldResult, ...], dict[str, float]]:
-        fold_results = tuple(self._evaluate_fold(spec, fold, preview.data_slice.bars) for fold in preview.folds)
+        fold_results = tuple(
+            self._evaluate_fold(
+                spec,
+                fold,
+                preview.data_slice.bars,
+                data_snapshot_id=preview.data_slice.snapshot_id,
+            )
+            for fold in preview.folds
+        )
         return fold_results, self._aggregate_fold_results(fold_results)
 
     def _aggregate_fold_results(self, fold_results: Sequence[FoldResult]) -> dict[str, float]:

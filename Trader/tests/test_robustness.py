@@ -225,7 +225,7 @@ def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypat
         evaluation_key="evaluation-key",
     )
 
-    def fake_evaluate_fold(fold_spec: StrategySpec, fold: Fold, bars) -> FoldResult:
+    def fake_evaluate_fold(fold_spec: StrategySpec, fold: Fold, bars, **kwargs) -> FoldResult:
         if fold_spec.name.startswith("ema_cross_"):
             neighbor_fold_ids.append(fold.fold_id)
             return_pct = fold_returns[fold.fold_id]
@@ -579,7 +579,7 @@ def test_evaluate_preview_annualized_sharpe_uses_combined_fold_returns(monkeypat
         evaluation_key="evaluation-key",
     )
 
-    def fake_evaluate_fold(fold_spec: StrategySpec, fold: Fold, bars) -> FoldResult:
+    def fake_evaluate_fold(fold_spec: StrategySpec, fold: Fold, bars, **kwargs) -> FoldResult:
         backtest = fold_backtests[fold.fold_id]
         return FoldResult(
             fold_id=fold.fold_id,

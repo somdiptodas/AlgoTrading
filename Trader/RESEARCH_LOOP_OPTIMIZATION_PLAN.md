@@ -255,7 +255,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: `_evaluate_fold` now produces base metrics and baselines only; cost-stress metrics are added after robustness/promotion gating only for non-exploratory Stage-B results, and fold reports omit fake `cost_drag=0` when stress was skipped.
   - Verification: focused cost/runner/report tests passed (`.venv/bin/pytest -q tests/test_costs.py tests/test_robustness.py tests/test_ledger.py tests/test_holdout.py tests/test_research_queue.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
-- [ ] **Per-(snapshot, fold) baseline cache** (S3). `buy_and_hold`, `regular_session_open_to_close_long`, `session_long_flat_at_close`, `always_flat` are spec-independent; cache them per fold per loop process.
+- [x] **Per-(snapshot, fold) baseline cache** (S3). `buy_and_hold`, `regular_session_open_to_close_long`, `session_long_flat_at_close`, `always_flat` are spec-independent; cache them per fold per loop process.
+  - Completed: 2026-04-25
+  - Implementation: `EvaluationRunner` now caches fixed fold baselines per snapshot, fold window, and cost model while keeping `randomized_entry_same_exposure` per spec; fold-result caching is also snapshot-scoped to avoid stale reuse.
+  - Verification: focused baseline/runner tests passed (`.venv/bin/pytest -q tests/test_baselines.py tests/test_data_quality.py tests/test_robustness.py tests/test_costs.py tests/test_research_queue.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
 - [ ] **Per-(snapshot, fold) indicator cache** (S3). EMA/RSI/rolling-high/rolling-low keyed by `(snapshot_id, fold_range, feature, params)`. Targets the biggest hit-rate when grids share lookback values.
 - [ ] **Cap planner overplan factor at 4** once stage-A exists (S8). Reduce wasted preview/eval-key compute.
 - [ ] **Add `delta_exposure_adjusted_buy_and_hold_pct` and use it as the candidate gate** (V1). The current `delta_buy_and_hold > 0.5` is structurally unwinnable for low-exposure strategies in a bull market. This is the *single biggest reason* nothing has promoted.

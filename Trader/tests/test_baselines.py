@@ -6,13 +6,28 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trader.data.models import MarketBar
+from trader.evaluation.runner import EvaluationRunner
+from trader.evaluation.splits import Fold
 from trader.evaluation.baselines import evaluate_baselines
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
-from trader.strategies.spec import ExecConfig
+from trader.strategies.spec import ExecConfig, SignalSpec, StrategySpec
 
 
 NEW_YORK = ZoneInfo("America/New_York")
+
+
+class _AlwaysLongRegistry:
+    def generate_regime(
+        self,
+        spec: StrategySpec,
+        train_bars: tuple[MarketBar, ...],
+        test_bars: tuple[MarketBar, ...],
+    ) -> tuple[bool, ...]:
+        return tuple(True for _ in test_bars)
+
+    def compute_sizing_fraction(self, spec: StrategySpec) -> float:
+        return 1.0
 
 
 def _bars() -> tuple[MarketBar, ...]:
@@ -34,6 +49,36 @@ def _bars() -> tuple[MarketBar, ...]:
                 )
             )
     return tuple(bars)
+
+
+def _fold(bars: tuple[MarketBar, ...]) -> Fold:
+    return Fold(
+        fold_id="fold_1",
+        train_start_idx=0,
+        train_end_idx=1,
+        test_start_idx=2,
+        test_end_idx=len(bars) - 1,
+        embargo_bars=0,
+        train_start_utc=bars[0].timestamp_utc,
+        train_end_utc=bars[1].timestamp_utc,
+        test_start_utc=bars[2].timestamp_utc,
+        test_end_utc=bars[-1].timestamp_utc,
+    )
+
+
+def _baseline_metrics(return_pct: float = 0.0) -> dict[str, float]:
+    return {
+        "return_pct": return_pct,
+        "annualized_sharpe": 0.0,
+        "sharpe_like": 0.0,
+        "max_drawdown_pct": 0.0,
+        "exposure_pct": 0.0,
+        "trade_count": 0.0,
+        "win_rate_pct": 0.0,
+        "profit_factor": 0.0,
+        "avg_trade_pct": 0.0,
+        "final_cash": 100_000.0,
+    }
 
 
 def _single_session_bars(count: int) -> tuple[MarketBar, ...]:
@@ -125,6 +170,95 @@ def test_intraday_baselines_are_present_and_session_bounded() -> None:
     assert baselines["regular_session_open_to_close_long"]["trade_count"] == 2.0
     assert baselines["regular_session_open_to_close_long"]["exposure_pct"] == 100.0
     assert baselines["session_long_flat_at_close"]["trade_count"] == 2.0
+
+
+def test_runner_caches_fixed_fold_baselines_but_not_randomized_entry(monkeypatch) -> None:
+    bars = _bars()
+    fold = _fold(bars)
+    runner = EvaluationRunner.__new__(EvaluationRunner)
+    runner.registry = _AlwaysLongRegistry()
+    runner._fold_result_cache = {}
+    runner._baseline_cache = {}
+    calls = {
+        "always_flat": 0,
+        "buy_and_hold": 0,
+        "regular_session_open_to_close_long": 0,
+        "session_long_flat_at_close": 0,
+        "randomized_entry_same_exposure": 0,
+    }
+
+    def count_fixed(name: str, return_pct: float):
+        def baseline(*args, **kwargs):
+            calls[name] += 1
+            return _baseline_metrics(return_pct)
+
+        return baseline
+
+    def randomized(*args, **kwargs):
+        calls["randomized_entry_same_exposure"] += 1
+        return _baseline_metrics(5.0)
+
+    monkeypatch.setattr("trader.evaluation.runner.always_flat", count_fixed("always_flat", 0.0))
+    monkeypatch.setattr("trader.evaluation.runner.buy_and_hold", count_fixed("buy_and_hold", 1.0))
+    monkeypatch.setattr(
+        "trader.evaluation.runner.regular_session_open_to_close_long",
+        count_fixed("regular_session_open_to_close_long", 2.0),
+    )
+    monkeypatch.setattr(
+        "trader.evaluation.runner.session_long_flat_at_close",
+        count_fixed("session_long_flat_at_close", 3.0),
+    )
+    monkeypatch.setattr("trader.evaluation.runner.randomized_entry_same_exposure", randomized)
+
+    first = runner._evaluate_fold(
+        StrategySpec(name="cache_one", signal=SignalSpec("ema_cross", {"fast_length": 2, "slow_length": 3})),
+        fold,
+        bars,
+        data_snapshot_id="snapshot_a",
+    )
+    first.baseline_metrics["buy_and_hold"]["return_pct"] = 999.0
+    same_spec_new_snapshot = runner._evaluate_fold(
+        StrategySpec(name="cache_one", signal=SignalSpec("ema_cross", {"fast_length": 2, "slow_length": 3})),
+        fold,
+        bars,
+        data_snapshot_id="snapshot_b",
+    )
+    second = runner._evaluate_fold(
+        StrategySpec(name="cache_two", signal=SignalSpec("ema_cross", {"fast_length": 3, "slow_length": 4})),
+        fold,
+        bars,
+        data_snapshot_id="snapshot_a",
+    )
+    third = runner._evaluate_fold(
+        StrategySpec(name="cache_three", signal=SignalSpec("ema_cross", {"fast_length": 4, "slow_length": 5})),
+        fold,
+        bars,
+        data_snapshot_id="snapshot_b",
+    )
+    fourth = runner._evaluate_fold(
+        StrategySpec(
+            name="cache_four",
+            signal=SignalSpec("ema_cross", {"fast_length": 5, "slow_length": 6}),
+            exec_config=ExecConfig(initial_cash=200_000.0),
+        ),
+        fold,
+        bars,
+        data_snapshot_id="snapshot_b",
+    )
+
+    assert first.baseline_metrics["buy_and_hold"]["return_pct"] == 999.0
+    assert same_spec_new_snapshot.baseline_metrics["buy_and_hold"]["return_pct"] == 1.0
+    assert second.baseline_metrics["buy_and_hold"]["return_pct"] == 1.0
+    assert second.baseline_metrics["session_long_flat_at_close"]["return_pct"] == 3.0
+    assert third.baseline_metrics["buy_and_hold"]["return_pct"] == 1.0
+    assert fourth.baseline_metrics["session_long_flat_at_close"]["return_pct"] == 3.0
+    assert calls == {
+        "always_flat": 3,
+        "buy_and_hold": 3,
+        "regular_session_open_to_close_long": 3,
+        "session_long_flat_at_close": 3,
+        "randomized_entry_same_exposure": 5,
+    }
 
 
 def test_randomized_entry_baseline_is_reproducible_and_matches_reference_exposure() -> None:
