@@ -29,7 +29,10 @@ class BacktestRequest:
     end: datetime | None
     initial_cash: float
     commission_per_order: float
+    commission_per_share: float
     slippage_bps: float
+    spread_bps: float
+    max_position_notional: float | None
     fast_length: int
     slow_length: int
     signal_buffer_bps: float
@@ -51,7 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end", help="End timestamp in ISO format")
     parser.add_argument("--initial-cash", type=float, default=100_000.0)
     parser.add_argument("--commission-per-order", type=float, default=0.0)
+    parser.add_argument("--commission-per-share", type=float, default=0.0)
     parser.add_argument("--slippage-bps", type=float, default=1.0)
+    parser.add_argument("--spread-bps", type=float, default=0.0)
+    parser.add_argument("--max-position-notional", type=float)
     parser.add_argument("--fast-length", type=int, default=20)
     parser.add_argument("--slow-length", type=int, default=80)
     parser.add_argument("--signal-buffer-bps", type=float, default=0.0)
@@ -72,8 +78,14 @@ def parse_args(argv: list[str] | None = None) -> BacktestRequest:
         raise ValueError("--initial-cash must be > 0")
     if args.commission_per_order < 0:
         raise ValueError("--commission-per-order must be >= 0")
+    if args.commission_per_share < 0:
+        raise ValueError("--commission-per-share must be >= 0")
     if args.slippage_bps < 0:
         raise ValueError("--slippage-bps must be >= 0")
+    if args.spread_bps < 0:
+        raise ValueError("--spread-bps must be >= 0")
+    if args.max_position_notional is not None and args.max_position_notional <= 0:
+        raise ValueError("--max-position-notional must be > 0 when set")
     if args.signal_buffer_bps < 0:
         raise ValueError("--signal-buffer-bps must be >= 0")
     start = _parse_datetime(args.start) if args.start else None
@@ -90,7 +102,10 @@ def parse_args(argv: list[str] | None = None) -> BacktestRequest:
         end=end,
         initial_cash=args.initial_cash,
         commission_per_order=args.commission_per_order,
+        commission_per_share=args.commission_per_share,
         slippage_bps=args.slippage_bps,
+        spread_bps=args.spread_bps,
+        max_position_notional=args.max_position_notional,
         fast_length=args.fast_length,
         slow_length=args.slow_length,
         signal_buffer_bps=args.signal_buffer_bps,
@@ -119,7 +134,10 @@ def run_backtest(request: BacktestRequest) -> BacktestResult:
         exec_config=ExecConfig(
             initial_cash=request.initial_cash,
             commission_per_order=request.commission_per_order,
+            commission_per_share=request.commission_per_share,
             slippage_bps=request.slippage_bps,
+            spread_bps=request.spread_bps,
+            max_position_notional=request.max_position_notional,
             regular_session_only=request.regular_session_only,
             flat_at_close=request.flat_at_close,
         ),
@@ -181,7 +199,8 @@ def _print_summary(result: BacktestResult, request: BacktestRequest) -> None:
     )
     print(
         f"Parameters: fast={request.fast_length} slow={request.slow_length} "
-        f"buffer_bps={request.signal_buffer_bps:.2f} slippage_bps={request.slippage_bps:.2f}"
+        f"buffer_bps={request.signal_buffer_bps:.2f} slippage_bps={request.slippage_bps:.2f} "
+        f"spread_bps={request.spread_bps:.2f}"
     )
     print(
         f"Equity: start=${result.initial_cash:,.2f} end=${result.final_cash:,.2f} "

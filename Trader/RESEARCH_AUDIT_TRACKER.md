@@ -125,11 +125,14 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - False-positive control: session-length checks only fire for sessions that appear to span the full regular session, and raw boundary expansion is limited to immediate missing first/last minute cases so partial folds do not inherit outside-session warnings.
   - Verification: `.venv/bin/pytest tests/test_data_quality.py tests/test_ledger.py tests/test_holdout.py -q` passes 19 tests; `.venv/bin/pytest -q` passes 65 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Improve cost and fill assumptions for research.
+- [x] Improve cost and fill assumptions for research.
   - Add commission per share.
   - Add spread/slippage scenarios.
   - Add volume participation or max notional caps.
   - Report cost drag per strategy.
+  - Completed 2026-04-25: extended `ExecConfig` with `commission_per_share`, `spread_bps`, and `max_position_notional`; fills now apply per-share commissions, half-spread plus slippage on both sides, and max-notional share caps. Trades record realized execution cost, metrics report cash/percent cost drag, and fold/holdout metrics include zero-cost drag plus +2 bps slippage/spread stress scenarios.
+  - Reporting/compatibility: reports show the new execution fields and cost metrics; legacy trade payloads read with `cost_cash=0.0`; backtest CLI accepts the new cost flags; default EMA regression remains unchanged.
+  - Verification: `.venv/bin/pytest tests/test_costs.py tests/test_backtest_regression.py tests/test_splits_metrics_registry.py -q` passes 16 tests; `.venv/bin/pytest -q` passes 69 tests. Verification subagent reported no blockers.
 
 ## P2 - Loop Efficiency And Search Control
 

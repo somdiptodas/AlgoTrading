@@ -18,6 +18,7 @@ def calculate_metrics(result: BacktestResult) -> dict[str, float]:
     losers = [trade for trade in result.trades if trade.pnl_cash <= 0]
     gross_profit = sum(trade.pnl_cash for trade in winners)
     gross_loss = abs(sum(trade.pnl_cash for trade in losers))
+    cost_drag_cash = sum(trade.cost_cash for trade in result.trades)
     return {
         "return_pct": total_return_pct,
         "annualized_sharpe": annualized_sharpe(result.equity_curve, starting_equity=result.initial_cash),
@@ -28,6 +29,8 @@ def calculate_metrics(result: BacktestResult) -> dict[str, float]:
         "win_rate_pct": safe_pct(len(winners), max(len(result.trades), 1)),
         "profit_factor": gross_profit / gross_loss if gross_loss else (float("inf") if gross_profit else 0.0),
         "avg_trade_pct": mean([trade.pnl_pct for trade in result.trades]) if result.trades else 0.0,
+        "cost_drag_cash": cost_drag_cash,
+        "cost_drag_pct": (cost_drag_cash / result.initial_cash) * 100.0,
     }
 
 

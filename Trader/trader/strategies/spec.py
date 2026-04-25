@@ -31,7 +31,10 @@ class FilterSpec:
 class ExecConfig:
     initial_cash: float = 100_000.0
     commission_per_order: float = 0.0
+    commission_per_share: float = 0.0
     slippage_bps: float = 1.0
+    spread_bps: float = 0.0
+    max_position_notional: float | None = None
     regular_session_only: bool = True
     flat_at_close: bool = True
 

@@ -18,6 +18,7 @@ class Trade:
     pnl_cash: float
     pnl_pct: float
     exit_reason: str
+    cost_cash: float = 0.0
 
 
 def enter_long(
@@ -26,19 +27,26 @@ def enter_long(
     exec_config: ExecConfig,
     sizing_fraction: float = 1.0,
 ) -> tuple[float, Position | None]:
-    fill_price = bar.open * (1.0 + exec_config.slippage_bps / 10_000.0)
+    entry_bps = exec_config.slippage_bps + (exec_config.spread_bps / 2.0)
+    fill_price = bar.open * (1.0 + entry_bps / 10_000.0)
     deployable = cash * sizing_fraction
-    max_shares = int((deployable - exec_config.commission_per_order) // fill_price)
+    if exec_config.max_position_notional is not None:
+        deployable = min(deployable, exec_config.max_position_notional)
+    per_share_cost = fill_price + exec_config.commission_per_share
+    max_shares = int((deployable - exec_config.commission_per_order) // per_share_cost)
     if max_shares < 1:
         return cash, None
-    cost = (max_shares * fill_price) + exec_config.commission_per_order
+    commission = exec_config.commission_per_order + (max_shares * exec_config.commission_per_share)
+    cost = (max_shares * fill_price) + commission
     new_cash = cash - cost
     position = Position(
         entry_timestamp_ms=bar.timestamp_ms,
         entry_timestamp_utc=bar.timestamp_utc,
+        entry_reference_price=bar.open,
         entry_price=fill_price,
         shares=max_shares,
-        entry_commission=exec_config.commission_per_order,
+        entry_commission=commission,
+        entry_cost_cash=((fill_price - bar.open) * max_shares) + commission,
     )
     return new_cash, position
 
@@ -53,13 +61,16 @@ def exit_long(
     fill_at_close: bool,
 ) -> tuple[float, Trade]:
     raw_price = bar.close if fill_at_close else bar.open
-    fill_price = raw_price * (1.0 - exec_config.slippage_bps / 10_000.0)
-    proceeds = (position.shares * fill_price) - exec_config.commission_per_order
+    exit_bps = exec_config.slippage_bps + (exec_config.spread_bps / 2.0)
+    fill_price = raw_price * (1.0 - exit_bps / 10_000.0)
+    exit_commission = exec_config.commission_per_order + (position.shares * exec_config.commission_per_share)
+    proceeds = (position.shares * fill_price) - exit_commission
     new_cash = cash + proceeds
+    exit_cost_cash = ((raw_price - fill_price) * position.shares) + exit_commission
     pnl_cash = (
         (fill_price - position.entry_price) * position.shares
         - position.entry_commission
-        - exec_config.commission_per_order
+        - exit_commission
     )
     invested = (position.entry_price * position.shares) + position.entry_commission
     trade = Trade(
@@ -72,5 +83,6 @@ def exit_long(
         pnl_cash=pnl_cash,
         pnl_pct=(pnl_cash / invested) * 100 if invested else 0.0,
         exit_reason=reason,
+        cost_cash=position.entry_cost_cash + exit_cost_cash,
     )
     return new_cash, trade

@@ -36,6 +36,13 @@ _PRIMARY_METRIC_ORDER = (
     "win_rate_pct",
     "profit_factor",
     "avg_trade_pct",
+    "cost_drag_cash",
+    "cost_drag_pct",
+    "cost_drag_return_pct",
+    "cost_scenario_slippage_plus_2bps_return_pct",
+    "cost_scenario_slippage_plus_2bps_delta_pct",
+    "cost_scenario_spread_plus_2bps_return_pct",
+    "cost_scenario_spread_plus_2bps_delta_pct",
     "delta_always_flat_return_pct",
     "delta_regular_session_open_to_close_long_return_pct",
     "delta_session_long_flat_at_close_return_pct",
@@ -78,6 +85,13 @@ _METRIC_LABELS = {
     "win_rate_pct": "Win rate",
     "profit_factor": "Profit factor",
     "avg_trade_pct": "Average trade",
+    "cost_drag_cash": "Cost drag cash",
+    "cost_drag_pct": "Cost drag",
+    "cost_drag_return_pct": "Cost drag return",
+    "cost_scenario_slippage_plus_2bps_return_pct": "Return with +2 bps slippage",
+    "cost_scenario_slippage_plus_2bps_delta_pct": "Return delta with +2 bps slippage",
+    "cost_scenario_spread_plus_2bps_return_pct": "Return with +2 bps spread",
+    "cost_scenario_spread_plus_2bps_delta_pct": "Return delta with +2 bps spread",
     "delta_always_flat_return_pct": "Return vs always flat",
     "delta_regular_session_open_to_close_long_return_pct": "Return vs open-to-close long",
     "delta_session_long_flat_at_close_return_pct": "Return vs session-long flat-at-close",
@@ -110,6 +124,12 @@ _METRIC_LABELS = {
 _SIGNED_PERCENT_METRICS = {
     "return_pct",
     "avg_trade_pct",
+    "cost_drag_pct",
+    "cost_drag_return_pct",
+    "cost_scenario_slippage_plus_2bps_return_pct",
+    "cost_scenario_slippage_plus_2bps_delta_pct",
+    "cost_scenario_spread_plus_2bps_return_pct",
+    "cost_scenario_spread_plus_2bps_delta_pct",
     "delta_always_flat_return_pct",
     "delta_regular_session_open_to_close_long_return_pct",
     "delta_session_long_flat_at_close_return_pct",
@@ -185,7 +205,10 @@ def _render_strategy(spec: StrategySpec) -> str:
             "- Execution: "
             f"initial_cash={spec.exec_config.initial_cash:,.2f}, "
             f"commission_per_order={spec.exec_config.commission_per_order:,.2f}, "
+            f"commission_per_share={spec.exec_config.commission_per_share:,.4f}, "
             f"slippage_bps={spec.exec_config.slippage_bps:.2f}, "
+            f"spread_bps={spec.exec_config.spread_bps:.2f}, "
+            f"max_position_notional={spec.exec_config.max_position_notional}, "
             f"regular_session_only={spec.exec_config.regular_session_only}, "
             f"flat_at_close={spec.exec_config.flat_at_close}"
         ),
@@ -224,6 +247,7 @@ def _render_folds(folds: Sequence[FoldResult]) -> str:
                         f"sharpe={_format_metric_value('sharpe_like', fold.metrics.get('sharpe_like', 0.0))}",
                         f"drawdown={_format_metric_value('max_drawdown_pct', fold.metrics.get('max_drawdown_pct', 0.0))}",
                         f"trades={_format_metric_value('trade_count', fold.metrics.get('trade_count', 0.0))}",
+                        f"cost_drag={_format_metric_value('cost_drag_return_pct', fold.metrics.get('cost_drag_return_pct', 0.0))}",
                     ]
                 ),
                 "- Baselines: "

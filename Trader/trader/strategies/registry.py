@@ -61,8 +61,14 @@ class StrategyRegistry:
             raise ValueError("exec_config.initial_cash must be > 0")
         if spec.exec_config.commission_per_order < 0:
             raise ValueError("exec_config.commission_per_order must be >= 0")
+        if spec.exec_config.commission_per_share < 0:
+            raise ValueError("exec_config.commission_per_share must be >= 0")
         if spec.exec_config.slippage_bps < 0:
             raise ValueError("exec_config.slippage_bps must be >= 0")
+        if spec.exec_config.spread_bps < 0:
+            raise ValueError("exec_config.spread_bps must be >= 0")
+        if spec.exec_config.max_position_notional is not None and spec.exec_config.max_position_notional <= 0:
+            raise ValueError("exec_config.max_position_notional must be > 0 when set")
         if spec.signal.name not in self.signal_handlers:
             raise ValueError(f"Unknown signal handler: {spec.signal.name}")
         if spec.sizing.name not in self.sizing_handlers:
@@ -92,7 +98,10 @@ class StrategyRegistry:
         values = {
             "initial_cash": config.initial_cash,
             "commission_per_order": config.commission_per_order,
+            "commission_per_share": config.commission_per_share,
             "slippage_bps": config.slippage_bps,
+            "spread_bps": config.spread_bps,
+            "max_position_notional": config.max_position_notional,
         }
         self._validate_finite_params("exec_config", values)
 

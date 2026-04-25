@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time
 from hashlib import sha256
 from typing import Sequence
@@ -230,6 +230,7 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
+        metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
         baselines = evaluate_baselines(
             test_bars,
             spec.exec_config,
@@ -259,6 +260,7 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
+        metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
         baselines = evaluate_baselines(
             test_bars,
             spec.exec_config,
@@ -277,6 +279,42 @@ class EvaluationRunner:
             warnings=warnings,
             backtest=result,
         )
+
+    def _cost_scenario_metrics(
+        self,
+        spec: StrategySpec,
+        bars: tuple[MarketBar, ...],
+        regime: Sequence[bool],
+        sizing_fraction: float,
+        metrics: dict[str, float],
+    ) -> dict[str, float]:
+        base_config = spec.exec_config
+        zero_cost = replace(
+            base_config,
+            commission_per_order=0.0,
+            commission_per_share=0.0,
+            slippage_bps=0.0,
+            spread_bps=0.0,
+        )
+        slippage_stress = replace(base_config, slippage_bps=base_config.slippage_bps + 2.0)
+        spread_stress = replace(base_config, spread_bps=base_config.spread_bps + 2.0)
+        zero_return = calculate_metrics(
+            run_long_only_engine(bars, regime, zero_cost, sizing_fraction)
+        )["return_pct"]
+        slippage_return = calculate_metrics(
+            run_long_only_engine(bars, regime, slippage_stress, sizing_fraction)
+        )["return_pct"]
+        spread_return = calculate_metrics(
+            run_long_only_engine(bars, regime, spread_stress, sizing_fraction)
+        )["return_pct"]
+        base_return = metrics["return_pct"]
+        return {
+            "cost_drag_return_pct": zero_return - base_return,
+            "cost_scenario_slippage_plus_2bps_return_pct": slippage_return,
+            "cost_scenario_slippage_plus_2bps_delta_pct": slippage_return - base_return,
+            "cost_scenario_spread_plus_2bps_return_pct": spread_return,
+            "cost_scenario_spread_plus_2bps_delta_pct": spread_return - base_return,
+        }
 
     def _evaluate_preview_folds(
         self,
