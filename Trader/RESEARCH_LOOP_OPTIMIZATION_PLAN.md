@@ -247,7 +247,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
 
 ### P0 — fix what we burn time/money on now
 
-- [ ] **Stage-A cheap pre-screen before Stage-B robustness** (G2, S1). Single-fold, no baselines, no cost stress; reject on return ≤ 0, trade count ∉ `[10, 400]`, drawdown > 25%, exposure ∉ `[1%, 90%]`. Wire into `EvaluationRunner.evaluate_preview`.
+- [x] **Stage-A cheap pre-screen before Stage-B robustness** (G2, S1). Single-fold, no baselines, no cost stress; reject on return ≤ 0, trade count ∉ `[10, 400]`, drawdown > 25%, exposure ∉ `[1%, 90%]`. Wire into `EvaluationRunner.evaluate_preview`.
+  - Completed: 2026-04-25
+  - Implementation: `EvaluationRunner.evaluate_preview` now runs a most-recent-fold Stage-A gate before full folds/robustness when robustness is enabled; Stage-A rejects return exploratory results without baselines, cost stress, robustness neighbors, or holdout.
+  - Verification: focused runner/queue tests passed (`.venv/bin/pytest -q tests/test_robustness.py tests/test_holdout.py tests/test_research_queue.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
 - [ ] **Conditional cost stress** (S5). Move `_cost_scenario_metrics` out of `_evaluate_fold`; run only after Stage B passes base gates.
 - [ ] **Per-(snapshot, fold) baseline cache** (S3). `buy_and_hold`, `regular_session_open_to_close_long`, `session_long_flat_at_close`, `always_flat` are spec-independent; cache them per fold per loop process.
 - [ ] **Per-(snapshot, fold) indicator cache** (S3). EMA/RSI/rolling-high/rolling-low keyed by `(snapshot_id, fold_range, feature, params)`. Targets the biggest hit-rate when grids share lookback values.

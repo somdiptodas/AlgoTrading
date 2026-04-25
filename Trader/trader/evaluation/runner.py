@@ -20,6 +20,11 @@ from trader.strategies.spec import StrategySpec
 
 DEFAULT_LOCKED_HOLDOUT_MONTHS = 3
 _HOLDOUT_STAGES = {"candidate"}
+_STAGE_A_MIN_TRADES = 10.0
+_STAGE_A_MAX_TRADES = 400.0
+_STAGE_A_MAX_DRAWDOWN_PCT = 25.0
+_STAGE_A_MIN_EXPOSURE_PCT = 1.0
+_STAGE_A_MAX_EXPOSURE_PCT = 90.0
 
 
 @dataclass(frozen=True)
@@ -128,8 +133,37 @@ class EvaluationRunner:
         include_robustness: bool = True,
         experiment_id: str | None = None,
     ) -> ExperimentResult:
-        fold_results, aggregate_metrics = self._evaluate_preview_folds(preview.spec, preview)
         experiment_id = experiment_id or sha256(preview.evaluation_key.encode("utf-8")).hexdigest()[:16]
+        stage_a = self._evaluate_stage_a(preview) if include_robustness else None
+        if stage_a is not None:
+            stage_a_fold, stage_a_metrics = stage_a
+            reject_reasons = self._stage_a_reject_reasons(stage_a_metrics)
+            if reject_reasons:
+                stage_a_metrics = dict(stage_a_metrics)
+                stage_a_metrics["stage_a_pass"] = 0.0
+                stage_a_metrics["stage_a_reject_count"] = float(len(reject_reasons))
+                return ExperimentResult(
+                    experiment_id=experiment_id,
+                    status="completed",
+                    spec=preview.spec,
+                    spec_hash=preview.spec.spec_hash(),
+                    data_snapshot_id=preview.data_slice.snapshot_id,
+                    split_plan_id=preview.split_plan_id,
+                    cost_model_id=preview.cost_model_id,
+                    aggregate_metrics=stage_a_metrics,
+                    fold_results=(stage_a_fold,),
+                    robustness_checks={
+                        "stage_a_pass": False,
+                        **{f"stage_a_reject_{reason}": True for reason in reject_reasons},
+                    },
+                    promotion_stage="exploratory",
+                    holdout_result=None,
+                )
+
+        fold_results, aggregate_metrics = self._evaluate_preview_folds(preview.spec, preview)
+        aggregate_metrics = dict(aggregate_metrics)
+        if stage_a is not None:
+            aggregate_metrics["stage_a_pass"] = 1.0
         robustness = (
             assess_robustness(
                 spec=preview.spec,
@@ -245,6 +279,50 @@ class EvaluationRunner:
             split_plan_id,
             validated.exec_config.cost_model_id(),
         )
+
+    def _evaluate_stage_a(self, preview: EvaluationPreview) -> tuple[FoldResult, dict[str, float]] | None:
+        if not preview.folds:
+            return None
+        fold = preview.folds[-1]
+        fold_result = self._evaluate_fast_fold(preview.spec, fold, preview.data_slice.bars)
+        metrics = dict(fold_result.metrics)
+        metrics["annualized_sharpe"] = annualized_sharpe_for_backtests((fold_result.backtest,))
+        return fold_result, metrics
+
+    def _evaluate_fast_fold(self, spec: StrategySpec, fold: Fold, bars: tuple[MarketBar, ...]) -> FoldResult:
+        train_bars = tuple(bars[fold.train_start_idx : fold.train_end_idx + 1])
+        test_bars = tuple(bars[fold.test_start_idx : fold.test_end_idx + 1])
+        warnings = self._quality_warnings(spec, test_bars)
+        regime = self.registry.generate_regime(spec, train_bars, test_bars)
+        sizing_fraction = self.registry.compute_sizing_fraction(spec)
+        result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
+        metrics = calculate_metrics(result)
+        return FoldResult(
+            fold_id=fold.fold_id,
+            train_start_utc=fold.train_start_utc,
+            train_end_utc=fold.train_end_utc,
+            test_start_utc=fold.test_start_utc,
+            test_end_utc=fold.test_end_utc,
+            metrics=metrics,
+            baseline_metrics={},
+            baseline_deltas={},
+            warnings=warnings,
+            backtest=result,
+        )
+
+    def _stage_a_reject_reasons(self, metrics: dict[str, float]) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if metrics.get("return_pct", 0.0) <= 0.0:
+            reasons.append("non_positive_return")
+        trade_count = metrics.get("trade_count", 0.0)
+        if trade_count < _STAGE_A_MIN_TRADES or trade_count > _STAGE_A_MAX_TRADES:
+            reasons.append("trade_count")
+        if metrics.get("max_drawdown_pct", 0.0) > _STAGE_A_MAX_DRAWDOWN_PCT:
+            reasons.append("drawdown")
+        exposure_pct = metrics.get("exposure_pct", 0.0)
+        if exposure_pct < _STAGE_A_MIN_EXPOSURE_PCT or exposure_pct > _STAGE_A_MAX_EXPOSURE_PCT:
+            reasons.append("exposure")
+        return tuple(reasons)
 
     def _evaluate_fold(self, spec: StrategySpec, fold: Fold, bars: tuple[MarketBar, ...]) -> FoldResult:
         cache_key = (
