@@ -8,7 +8,14 @@ from trader.ledger.entry import json_dumps, json_loads
 from trader.paper.models import Fill, OrderAck, OrderRequest
 
 
-AuditEventType = Literal["order_submitted", "order_ack", "fill", "reconciliation", "risk_blocked"]
+AuditEventType = Literal[
+    "order_submitted",
+    "order_ack",
+    "fill",
+    "reconciliation",
+    "risk_blocked",
+    "data_integrity_blocked",
+]
 
 
 @dataclass(frozen=True)

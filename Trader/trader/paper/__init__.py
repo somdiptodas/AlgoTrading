@@ -2,6 +2,14 @@
 
 from trader.paper.broker import PaperBroker, client_order_id, with_client_order_id
 from trader.paper.gateway import PaperTradingGateway
+from trader.paper.live_data import (
+    EarlyClose,
+    LiveDataIntegrityChecker,
+    LiveDataIntegrityConfig,
+    LiveDataIntegrityDecision,
+    LiveMarketSnapshot,
+    MarketCalendar,
+)
 from trader.paper.models import BrokerPosition, ExpectedPosition, Fill, OrderAck, OrderRequest
 from trader.paper.reconcile import PositionMismatch, ReconciliationReport, reconcile_positions
 from trader.paper.risk import NoTradeWindow, RiskConfig, RiskControlViolation, RiskDecision, RiskManager
@@ -11,6 +19,12 @@ __all__ = [
     "BrokerPosition",
     "ExpectedPosition",
     "Fill",
+    "EarlyClose",
+    "LiveDataIntegrityChecker",
+    "LiveDataIntegrityConfig",
+    "LiveDataIntegrityDecision",
+    "LiveMarketSnapshot",
+    "MarketCalendar",
     "OrderAck",
     "OrderRequest",
     "PaperBroker",

@@ -248,10 +248,12 @@ This file consolidates the Codex audit and the Claude Code audit into a prioriti
   - Completed 2026-04-25: added paper-trading risk controls for projected max position notional, persistent daily loss limits, persistent max-orders-per-NY-trading-day checks, persistent kill switch state, and configured no-trade NY dates/UTC event windows. Gateway risk checks run only for new submissions after idempotent replay checks and write `risk_blocked` audit events on rejects.
   - Verification: `.venv/bin/pytest tests/test_paper_risk.py tests/test_paper_trading.py tests/test_costs.py tests/test_ledger.py -q` passes 50 tests; `.venv/bin/pytest -q` passes 168 tests. Verification subagent re-review reported no blockers.
 
-- [ ] Add live data integrity checks.
+- [x] Add live data integrity checks.
   - Stale quote/bar detection.
   - Missing minute handling.
   - Market-hours and early-close calendar.
+  - Completed 2026-04-25: added an optional paper-trading live-data integrity gate with stale quote/bar checks, future-data rejection, missing-minute/out-of-order bar checks, and a configurable NY market calendar with closed dates and early-close overrides. Gateway checks run after idempotent replay and before risk/broker submission, and rejects write `data_integrity_blocked` audit events.
+  - Verification: `.venv/bin/pytest tests/test_paper_data_integrity.py tests/test_paper_risk.py tests/test_paper_trading.py -q` passes 29 tests; `.venv/bin/pytest -q` passes 178 tests. Verification subagent re-review reported no blockers.
 
 - [ ] Add strategy decay monitoring.
   - Re-evaluate promoted specs as new data arrives.
