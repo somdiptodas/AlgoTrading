@@ -331,7 +331,7 @@ the checklist in each commit.
 - [x] Add Optuna/TPE support for tuning parameters inside a fixed rule shape.
 - [x] Disable 2-signal composite strategies in the active research loop.
 - [x] Keep old `composite` tests as compatibility coverage.
-- [ ] Add planner tests proving active multi-signal candidates always satisfy
+- [x] Add planner tests proving active multi-signal candidates always satisfy
       the 3+ entry and 3+ exit signal rule.
 
 ### Phase 8: Evaluation And Rollout

@@ -98,6 +98,21 @@ def test_planner_generates_valid_multi_signal_candidates_with_minimum_rule_sizes
         assert len(validated.signal.params["exit_rule"]["signals"]) >= 3  # type: ignore[index]
 
 
+def test_planner_default_candidates_are_valid_multi_signal_rules() -> None:
+    planner = DeterministicPlanner(REGISTRY)
+
+    planned = planner.plan(batch_size=32)
+
+    assert planned
+    assert {item.spec.signal.name for item in planned} == {"multi_signal"}
+    for item in planned:
+        validated = REGISTRY.validate_spec(item.spec)
+        entry_rule = validated.signal.params["entry_rule"]
+        exit_rule = validated.signal.params["exit_rule"]
+        assert len(entry_rule["signals"]) >= 3  # type: ignore[index]
+        assert len(exit_rule["signals"]) >= 3  # type: ignore[index]
+
+
 def test_planner_restart_changes_multi_signal_starting_region() -> None:
     planner = DeterministicPlanner(REGISTRY)
 
