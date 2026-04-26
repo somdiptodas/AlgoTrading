@@ -21,6 +21,8 @@ class Trade:
     exit_reason: str
     cost_cash: float = 0.0
     entry_reason: str = "signal_on"
+    entry_rule: RuleDecision | None = None
+    exit_rule: RuleDecision | None = None
 
 
 def enter_long(
@@ -65,9 +67,10 @@ def exit_long(
     reason: str,
     *,
     fill_at_close: bool,
+    exit_rule: RuleDecision | None = None,
 ) -> tuple[float, Trade]:
     raw_price = bar.close if fill_at_close else bar.open
-    return exit_long_at_price(cash, position, bar, exec_config, reason, raw_price)
+    return exit_long_at_price(cash, position, bar, exec_config, reason, raw_price, exit_rule=exit_rule)
 
 
 def exit_long_at_price(
@@ -77,6 +80,8 @@ def exit_long_at_price(
     exec_config: ExecConfig,
     reason: str,
     raw_price: float,
+    *,
+    exit_rule: RuleDecision | None = None,
 ) -> tuple[float, Trade]:
     exit_bps = exec_config.slippage_bps + (exec_config.spread_bps / 2.0)
     fill_price = raw_price * (1.0 - exit_bps / 10_000.0)
@@ -102,5 +107,7 @@ def exit_long_at_price(
         exit_reason=reason,
         cost_cash=position.entry_cost_cash + exit_cost_cash,
         entry_reason=position.entry_reason,
+        entry_rule=position.entry_rule,
+        exit_rule=exit_rule,
     )
     return new_cash, trade

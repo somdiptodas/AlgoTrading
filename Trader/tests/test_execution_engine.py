@@ -175,3 +175,21 @@ def test_enter_long_stores_entry_decision_on_position() -> None:
 
     assert position is not None
     assert position.entry_rule == entry_rule
+
+
+def test_decision_engine_copies_entry_and_exit_decisions_to_trade() -> None:
+    bars = tuple(_bar(index, 100.0) for index in range(4))
+    entry_rule = RuleDecision(True, "entry_rule_passed", (SignalVote("entry_a", True, "ok"),))
+    exit_rule = RuleDecision(True, "exit_rule_passed", (SignalVote("exit_a", True, "ok"),))
+    decisions = (
+        TradeDecision(entry_rule, RuleDecision(False, "exit_failed")),
+        TradeDecision(RuleDecision(False, "entry_failed"), exit_rule),
+        _decision(False, False),
+        _decision(False, False),
+    )
+
+    result = run_long_only_decision_engine(bars, decisions, ExecConfig(initial_cash=100_000.0, slippage_bps=0.0))
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_rule == entry_rule
+    assert result.trades[0].exit_rule == exit_rule

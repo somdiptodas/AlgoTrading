@@ -131,9 +131,25 @@ def run_long_only_decision_engine(
             elif action == "exit" and position is not None:
                 stop_fill_reference = stop_loss_fill_reference(position, bar, exec_config)
                 if stop_fill_reference is not None:
-                    cash, trade = exit_long_at_price(cash, position, bar, exec_config, "stop_loss", stop_fill_reference)
+                    cash, trade = exit_long_at_price(
+                        cash,
+                        position,
+                        bar,
+                        exec_config,
+                        "stop_loss",
+                        stop_fill_reference,
+                        exit_rule=decision,
+                    )
                 else:
-                    cash, trade = exit_long(cash, position, bar, exec_config, decision.reason, fill_at_close=False)
+                    cash, trade = exit_long(
+                        cash,
+                        position,
+                        bar,
+                        exec_config,
+                        decision.reason,
+                        fill_at_close=False,
+                        exit_rule=decision,
+                    )
                 trades.append(trade)
                 position = None
             pending_action = None
@@ -148,13 +164,29 @@ def run_long_only_decision_engine(
         if position is not None and exec_config.stop_loss_bps is not None:
             stop_fill_reference = stop_loss_fill_reference(position, bar, exec_config)
             if stop_fill_reference is not None:
-                cash, trade = exit_long_at_price(cash, position, bar, exec_config, "stop_loss", stop_fill_reference)
+                cash, trade = exit_long_at_price(
+                    cash,
+                    position,
+                    bar,
+                    exec_config,
+                    "stop_loss",
+                    stop_fill_reference,
+                    exit_rule=decision.exit,
+                )
                 trades.append(trade)
                 position = None
                 pending_action = None
 
         if position is not None and exec_config.flat_at_close and (next_session_changes or last_bar):
-            cash, trade = exit_long(cash, position, bar, exec_config, "session_close", fill_at_close=True)
+            cash, trade = exit_long(
+                cash,
+                position,
+                bar,
+                exec_config,
+                "session_close",
+                fill_at_close=True,
+                exit_rule=decision.exit,
+            )
             trades.append(trade)
             position = None
         elif position is not None and decision.exit.passed and not last_bar:
@@ -170,7 +202,15 @@ def run_long_only_decision_engine(
         equity_curve.append(mark_to_market(cash, position, bar.close))
 
     if position is not None:
-        cash, trade = exit_long(cash, position, bars[-1], exec_config, "final_bar", fill_at_close=True)
+        cash, trade = exit_long(
+            cash,
+            position,
+            bars[-1],
+            exec_config,
+            "final_bar",
+            fill_at_close=True,
+            exit_rule=decisions_by_bar[-1].exit,
+        )
         trades.append(trade)
         position = None
         equity_curve[-1] = cash
