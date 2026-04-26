@@ -15,6 +15,7 @@ from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
 from trader.ledger.entry import (
     LedgerEntry,
+    backtest_from_payload,
     entry_from_json,
     experiment_result_to_ledger_payload,
     experiment_result_to_payload,
@@ -254,6 +255,52 @@ def test_compact_ledger_summaries_omit_decision_traces(tmp_path: Path) -> None:
     assert "exit_rule" not in raw_entry_json
     fold_payload = json.loads(raw_entry_json)["result"]["fold_results"][0]
     assert fold_payload["backtest_summary"]["trade_count"] == 1
+
+
+def test_backtest_payload_reads_old_and_new_trade_artifact_payloads() -> None:
+    legacy_trade_payload = {
+        "entry_timestamp_utc": "2026-01-05T14:30:00+00:00",
+        "exit_timestamp_utc": "2026-01-05T14:35:00+00:00",
+        "entry_price": 100.0,
+        "exit_price": 101.0,
+        "shares": 10,
+        "bars_held": 5,
+        "pnl_cash": 10.0,
+        "pnl_pct": 1.0,
+        "exit_reason": "signal_flip",
+    }
+    new_entry_rule = RuleDecision(True, "entry all passed", (SignalVote("entry_a", True, "ok"),))
+    new_exit_rule = RuleDecision(True, "exit any passed", (SignalVote("exit_a", True, "ok"),))
+    new_trade_payload = trade_to_payload(
+        Trade(
+            "2026-01-05T14:40:00+00:00",
+            "2026-01-05T14:45:00+00:00",
+            101.0,
+            102.0,
+            10,
+            5,
+            10.0,
+            1.0,
+            new_exit_rule.reason,
+            entry_reason=new_entry_rule.reason,
+            entry_rule=new_entry_rule,
+            exit_rule=new_exit_rule,
+        )
+    )
+
+    backtest = backtest_from_payload(
+        {
+            "trades": [legacy_trade_payload, new_trade_payload],
+            "equity_curve": [100_000.0],
+            "initial_cash": 100_000.0,
+            "final_cash": 100_010.0,
+        }
+    )
+
+    assert backtest.trades[0].entry_rule is None
+    assert backtest.trades[0].exit_rule is None
+    assert backtest.trades[1].entry_rule == new_entry_rule
+    assert backtest.trades[1].exit_rule == new_exit_rule
 
 
 def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:
