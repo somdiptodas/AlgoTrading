@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trader.data.models import MarketBar
-from trader.execution.engine import run_long_only_decision_engine
+from trader.execution.engine import run_long_only_decision_engine, run_long_only_engine
 from trader.execution.fills import enter_long
 from trader.strategies.decisions import RuleDecision, SignalVote, TradeDecision
 from trader.strategies.spec import ExecConfig
@@ -193,3 +193,19 @@ def test_decision_engine_copies_entry_and_exit_decisions_to_trade() -> None:
     assert len(result.trades) == 1
     assert result.trades[0].entry_rule == entry_rule
     assert result.trades[0].exit_rule == exit_rule
+
+
+def test_legacy_regime_engine_path_still_runs_without_decision_details() -> None:
+    bars = tuple(_bar(index, 100.0) for index in range(4))
+
+    result = run_long_only_engine(
+        bars,
+        (True, True, False, False),
+        ExecConfig(initial_cash=100_000.0, slippage_bps=0.0),
+    )
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_reason == "signal_on"
+    assert result.trades[0].exit_reason == "signal_flip"
+    assert result.trades[0].entry_rule is None
+    assert result.trades[0].exit_rule is None
