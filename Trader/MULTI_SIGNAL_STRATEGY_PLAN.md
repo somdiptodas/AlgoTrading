@@ -254,7 +254,7 @@ the checklist in each commit.
   - [x] `breakout_up`
   - [x] `breakout_failed`
 - [ ] Add VWAP predicates:
-  - [ ] `vwap_distance`
+  - [x] `vwap_distance`
   - [ ] `vwap_reclaimed`
 - [ ] Add volume and regime predicates:
   - [ ] `relative_volume`

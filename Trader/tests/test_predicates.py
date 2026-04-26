@@ -163,3 +163,19 @@ def test_breakout_failed_predicate_votes_when_close_breaks_prior_low() -> None:
     votes = PREDICATES.generate_votes("breakout_failed", history, test, {"window": 3})
 
     assert votes == [SignalVote("breakout_failed", True, "close 100.00 < prior low 100.75")]
+
+
+def test_vwap_distance_predicate_votes_when_price_is_far_enough_from_vwap() -> None:
+    test = (_bar(0, 99.50, vwap=100.0),)
+
+    assert PREDICATES.validate_params("vwap_distance", {"side": "below", "min_bps": "25"}) == {
+        "side": "below",
+        "min_bps": 25.0,
+        "max_bps": 100_000.0,
+    }
+    assert PREDICATES.required_history("vwap_distance", {"side": "below"}) == 0
+    votes = PREDICATES.generate_votes("vwap_distance", (), test, {"side": "below", "min_bps": 25.0})
+
+    assert votes == [
+        SignalVote("vwap_distance", True, "VWAP distance 50.00 bps below in [25.00, 100000.00]")
+    ]
