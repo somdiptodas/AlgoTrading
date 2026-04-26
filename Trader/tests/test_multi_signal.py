@@ -6,7 +6,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trader.data.models import MarketBar
+from trader.strategies.decisions import SignalVote
 from trader.strategies.registry import REGISTRY
+from trader.strategies.signals import multi_signal
 from trader.strategies.spec import SignalSpec, StrategySpec
 
 
@@ -47,6 +49,28 @@ def _multi_signal_params() -> dict[str, object]:
             ],
         },
     }
+
+
+class _FakePredicates:
+    def __init__(self, votes: dict[str, list[bool]]) -> None:
+        self.votes = votes
+
+    def validate_params(self, name: str, params: dict[str, object]) -> dict[str, object]:
+        if name not in self.votes:
+            raise ValueError(f"Unknown atomic predicate: {name}")
+        return dict(params)
+
+    def generate_votes(
+        self,
+        name: str,
+        history_bars: tuple[MarketBar, ...],
+        test_bars: tuple[MarketBar, ...],
+        params: dict[str, object],
+    ) -> list[SignalVote]:
+        return [
+            SignalVote(name, passed, f"{name} vote {index}")
+            for index, passed in enumerate(self.votes[name][: len(test_bars)])
+        ]
 
 
 def test_multi_signal_normalizes_rules_and_child_predicate_params() -> None:
@@ -131,6 +155,79 @@ def test_multi_signal_rejects_exit_rules_with_fewer_than_three_signals() -> None
         REGISTRY.validate_spec(
             StrategySpec(
                 name="short_exit_rule",
+                signal=SignalSpec("multi_signal", params),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("combiner", "extra_params", "expected"),
+    (
+        ("all", {}, [True, False, False]),
+        ("any", {}, [True, True, True]),
+        ("k_of_n", {"k": 2}, [True, True, True]),
+        ("k_of_n", {"k": 3}, [True, False, False]),
+    ),
+)
+def test_multi_signal_combines_child_votes_into_trade_decisions(
+    monkeypatch: pytest.MonkeyPatch,
+    combiner: str,
+    extra_params: dict[str, object],
+    expected: list[bool],
+) -> None:
+    monkeypatch.setattr(
+        multi_signal,
+        "PREDICATES",
+        _FakePredicates(
+            {
+                "a": [True, False, True],
+                "b": [True, True, False],
+                "c": [True, True, True],
+                "x": [False, False, False],
+                "y": [False, True, False],
+                "z": [False, False, True],
+            }
+        ),
+    )
+    bars = tuple(_bar(index, 100.0 + index) for index in range(3))
+    spec = StrategySpec(
+        name=f"multi_signal_{combiner}",
+        signal=SignalSpec(
+            "multi_signal",
+            {
+                "entry_rule": {
+                    "combiner": combiner,
+                    **extra_params,
+                    "signals": [{"name": "a", "params": {}}, {"name": "b", "params": {}}, {"name": "c", "params": {}}],
+                },
+                "exit_rule": {
+                    "combiner": "any",
+                    "signals": [{"name": "x", "params": {}}, {"name": "y", "params": {}}, {"name": "z", "params": {}}],
+                },
+            },
+        ),
+    )
+
+    decisions = REGISTRY.generate_decisions(spec, tuple(), bars)
+
+    assert [decision.entry.passed for decision in decisions] == expected
+    assert [vote.name for vote in decisions[0].entry.votes] == ["a", "b", "c"]
+    assert decisions[0].entry.votes[0].detail == "a vote 0"
+    assert decisions[0].entry.reason.startswith(f"{combiner} passed: 3/3 signals")
+    assert [decision.exit.passed for decision in decisions] == [False, True, True]
+
+
+def test_multi_signal_rejects_invalid_k_of_n_rules() -> None:
+    params = _multi_signal_params()
+    entry_rule = dict(params["entry_rule"])  # type: ignore[arg-type]
+    entry_rule["combiner"] = "k_of_n"
+    entry_rule["k"] = 4
+    params["entry_rule"] = entry_rule
+
+    with pytest.raises(ValueError, match="multi_signal\\.k must be between 1 and signal count"):
+        REGISTRY.validate_spec(
+            StrategySpec(
+                name="bad_k_of_n",
                 signal=SignalSpec("multi_signal", params),
             )
         )

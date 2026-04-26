@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Sequence
 
 from trader.data.models import MarketBar
-from trader.strategies.decisions import TradeDecision
+from trader.strategies.decisions import RuleDecision, SignalVote, TradeDecision
 from trader.strategies.predicates import PREDICATES
 
 
@@ -26,7 +26,14 @@ def generate_decisions(
     test_bars: Sequence[MarketBar],
     params: dict[str, object],
 ) -> list[TradeDecision]:
-    raise NotImplementedError("multi_signal decision evaluation is not implemented yet")
+    history_tuple = tuple(history_bars)
+    test_tuple = tuple(test_bars)
+    entry_decisions = _evaluate_rule(params["entry_rule"], history_tuple, test_tuple)
+    exit_decisions = _evaluate_rule(params["exit_rule"], history_tuple, test_tuple)
+    return [
+        TradeDecision(entry=entry, exit=exit)
+        for entry, exit in zip(entry_decisions, exit_decisions)
+    ]
 
 
 def generate_regime(
@@ -71,5 +78,53 @@ def _normalize_rule(scope: str, raw_rule: object) -> dict[str, object]:
 
     rule: dict[str, object] = {"combiner": combiner, "signals": signals}
     if combiner == "k_of_n":
-        rule["k"] = int(raw_rule.get("k", len(signals)))
+        k = int(raw_rule.get("k", len(signals)))
+        if not 1 <= k <= len(signals):
+            raise ValueError("multi_signal.k must be between 1 and signal count")
+        rule["k"] = k
     return rule
+
+
+def _evaluate_rule(
+    rule: object,
+    history_bars: tuple[MarketBar, ...],
+    test_bars: tuple[MarketBar, ...],
+) -> list[RuleDecision]:
+    if not isinstance(rule, dict):
+        raise ValueError("multi_signal rules must be normalized before evaluation")
+    signals = _signals(rule)
+    child_votes = [
+        PREDICATES.generate_votes(str(signal["name"]), history_bars, test_bars, signal["params"])
+        for signal in signals
+    ]
+    return [_combine_votes(str(rule["combiner"]), tuple(votes), rule) for votes in zip(*child_votes)]
+
+
+def _combine_votes(combiner: str, votes: tuple[SignalVote, ...], rule: dict[str, object]) -> RuleDecision:
+    passed_count = sum(1 for vote in votes if vote.passed)
+    total = len(votes)
+    if combiner == "all":
+        passed = passed_count == total
+        return RuleDecision(passed, _reason("all", passed, passed_count, total), votes)
+    if combiner == "any":
+        passed = passed_count > 0
+        return RuleDecision(passed, _reason("any", passed, passed_count, total), votes)
+
+    k = int(rule["k"])
+    passed = passed_count >= k
+    return RuleDecision(passed, f"k_of_n {_status(passed)}: {passed_count}/{total} signals, k={k}", votes)
+
+
+def _signals(rule: dict[str, object]) -> list[dict[str, object]]:
+    signals = rule.get("signals")
+    if not isinstance(signals, list):
+        raise ValueError("multi_signal rule signals must be normalized before evaluation")
+    return signals
+
+
+def _reason(combiner: str, passed: bool, passed_count: int, total: int) -> str:
+    return f"{combiner} {_status(passed)}: {passed_count}/{total} signals"
+
+
+def _status(passed: bool) -> str:
+    return "passed" if passed else "failed"
