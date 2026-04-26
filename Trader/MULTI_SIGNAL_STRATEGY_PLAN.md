@@ -302,7 +302,7 @@ the checklist in each commit.
 
 - [x] Add stable report path conventions for generated run, dashboard, and
       experiment HTML files.
-- [ ] Generate one HTML report per loop run from loop JSON and ledger/artifact
+- [x] Generate one HTML report per loop run from loop JSON and ledger/artifact
       data.
 - [ ] Add a main dashboard page that lists all loop runs and links to generated
       run reports, experiment trade reports, markdown reports, loop JSON, and
