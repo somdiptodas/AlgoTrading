@@ -32,6 +32,62 @@ def test_trade_payload_round_trips_entry_reason_and_defaults_legacy_payload() ->
 
 
 def test_trade_visualization_renders_equity_and_reason_text(tmp_path: Path) -> None:
+    experiment_dir = _write_experiment_artifacts(
+        tmp_path,
+        {
+            "entry_timestamp_utc": "2026-01-05T14:30:00+00:00",
+            "exit_timestamp_utc": "2026-01-05T14:35:00+00:00",
+            "entry_price": 100.0,
+            "exit_price": 101.0,
+            "shares": 10,
+            "bars_held": 5,
+            "pnl_cash": 10.0,
+            "pnl_pct": 1.0,
+            "entry_reason": "signal_on",
+            "exit_reason": "signal_flip",
+            "cost_cash": 0.0,
+        },
+    )
+
+    output = write_trade_visualization(experiment_dir, tmp_path / "trade_review.html")
+    html = output.read_text(encoding="utf-8")
+
+    assert "Trade Review: exp_1" in html
+    assert "equity-line" in html
+    assert "Strategy signal was long on the prior bar" in html
+    assert "Strategy signal turned off" in html
+
+
+def test_trade_visualization_renders_rule_reasons(tmp_path: Path) -> None:
+    experiment_dir = _write_experiment_artifacts(
+        tmp_path,
+        {
+            "entry_timestamp_utc": "2026-01-05T14:30:00+00:00",
+            "exit_timestamp_utc": "2026-01-05T14:35:00+00:00",
+            "entry_price": 100.0,
+            "exit_price": 101.0,
+            "shares": 10,
+            "bars_held": 5,
+            "pnl_cash": 10.0,
+            "pnl_pct": 1.0,
+            "entry_reason": "signal_on",
+            "exit_reason": "signal_flip",
+            "entry_rule": {"passed": True, "reason": "entry k_of_n passed: 3/5 signals"},
+            "exit_rule": {"passed": False, "reason": "exit any blocked: 0/3 signals"},
+            "cost_cash": 0.0,
+        },
+    )
+
+    output = write_trade_visualization(experiment_dir, tmp_path / "trade_review.html")
+    html = output.read_text(encoding="utf-8")
+
+    assert "Entry rule passed" in html
+    assert "entry k_of_n passed: 3/5 signals" in html
+    assert "Exit rule failed" in html
+    assert "exit any blocked: 0/3 signals" in html
+
+
+def _write_experiment_artifacts(tmp_path: Path, trade: dict[str, object]) -> Path:
     experiment_dir = tmp_path / "artifacts" / "exp_1"
     experiment_dir.mkdir(parents=True)
     (experiment_dir / "result.json").write_text(
@@ -59,21 +115,7 @@ def test_trade_visualization_renders_equity_and_reason_text(tmp_path: Path) -> N
                 "folds": [
                     {
                         "fold_id": "fold_1",
-                        "trades": [
-                            {
-                                "entry_timestamp_utc": "2026-01-05T14:30:00+00:00",
-                                "exit_timestamp_utc": "2026-01-05T14:35:00+00:00",
-                                "entry_price": 100.0,
-                                "exit_price": 101.0,
-                                "shares": 10,
-                                "bars_held": 5,
-                                "pnl_cash": 10.0,
-                                "pnl_pct": 1.0,
-                                "entry_reason": "signal_on",
-                                "exit_reason": "signal_flip",
-                                "cost_cash": 0.0,
-                            }
-                        ],
+                        "trades": [trade],
                     }
                 ],
             }
@@ -98,11 +140,4 @@ def test_trade_visualization_renders_equity_and_reason_text(tmp_path: Path) -> N
         ),
         encoding="utf-8",
     )
-
-    output = write_trade_visualization(experiment_dir, tmp_path / "trade_review.html")
-    html = output.read_text(encoding="utf-8")
-
-    assert "Trade Review: exp_1" in html
-    assert "equity-line" in html
-    assert "Strategy signal was long on the prior bar" in html
-    assert "Strategy signal turned off" in html
+    return experiment_dir

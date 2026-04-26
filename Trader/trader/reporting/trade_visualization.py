@@ -169,6 +169,7 @@ def render_trade_visualization(experiment_dir: Path) -> str:
       color: var(--ink);
     }}
     .reason-detail {{ color: var(--muted); font-size: 12px; line-height: 1.35; margin-top: 2px; }}
+    .rule-status {{ font-size: 12px; font-weight: 700; margin-bottom: 3px; }}
     .empty {{ color: var(--muted); margin: 8px 0 0; }}
   </style>
 </head>
@@ -214,7 +215,9 @@ def _render_fold_section(
       <th class="num">Exit</th>
       <th class="num">PnL</th>
       <th>Entry Reason</th>
+      <th>Entry Rule</th>
       <th>Exit Reason</th>
+      <th>Exit Rule</th>
     </tr>
   </thead>
   <tbody>{rows}</tbody>
@@ -324,7 +327,9 @@ def _render_trade_row(index: int, trade: Mapping[str, Any]) -> str:
   <td class="num">{_format_price(trade.get("exit_price"))}</td>
   <td class="num {pnl_class}">{_format_cash(pnl)}</td>
   <td>{_reason_cell(_entry_reason(trade), ENTRY_REASON_DETAILS)}</td>
+  <td>{_rule_cell(trade, "entry")}</td>
   <td>{_reason_cell(_exit_reason(trade), EXIT_REASON_DETAILS)}</td>
+  <td>{_rule_cell(trade, "exit")}</td>
 </tr>"""
 
 
@@ -334,6 +339,36 @@ def _reason_cell(reason: str, details: Mapping[str, str]) -> str:
         f'<div class="reason-code">{html.escape(reason)}</div>'
         f'<div class="reason-detail">{html.escape(detail)}</div>'
     )
+
+
+def _rule_cell(trade: Mapping[str, Any], prefix: str) -> str:
+    rule = _rule_decision(trade, prefix)
+    if rule is None:
+        return (
+            '<div class="reason-code">n/a</div>'
+            '<div class="reason-detail">No structured rule data was recorded.</div>'
+        )
+
+    passed = rule.get("passed")
+    if passed is True:
+        status = "passed"
+        status_class = " good"
+    elif passed is False:
+        status = "failed"
+        status_class = " bad"
+    else:
+        status = "unknown"
+        status_class = ""
+    reason = str(rule.get("reason") or "n/a")
+    return (
+        f'<div class="rule-status{status_class}">{html.escape(prefix.title())} rule {status}</div>'
+        f'<div class="reason-code">{html.escape(reason)}</div>'
+    )
+
+
+def _rule_decision(trade: Mapping[str, Any], prefix: str) -> Mapping[str, Any] | None:
+    rule = trade.get(f"{prefix}_rule")
+    return rule if isinstance(rule, Mapping) else None
 
 
 def _chart_grid(
