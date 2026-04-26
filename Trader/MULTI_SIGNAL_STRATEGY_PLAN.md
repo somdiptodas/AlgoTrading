@@ -325,7 +325,7 @@ the checklist in each commit.
 - [x] Add a versioned `multi_signal_v1` search grammar.
 - [x] Generate candidates lazily instead of precomputing the full Cartesian
       product.
-- [ ] Generate only 3+ signal entry rules and 3+ signal exit rules.
+- [x] Generate only 3+ signal entry rules and 3+ signal exit rules.
 - [ ] Add shape keys for UCB/search grouping.
 - [ ] Add randomized restarts when candidate reuse gets too high.
 - [ ] Add Optuna/TPE support for tuning parameters inside a fixed rule shape.

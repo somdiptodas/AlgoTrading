@@ -62,6 +62,7 @@ _CONFIRMATION_FILTER_GRID = {
 }
 _COMPOSITE_VARIANTS_PER_RECIPE = 3
 MULTI_SIGNAL_SEARCH_SPACE_VERSION = "multi_signal_v1"
+_MULTI_SIGNAL_VARIANTS_PER_SHAPE = 12
 
 
 @dataclass(frozen=True)
@@ -257,7 +258,10 @@ class DeterministicPlanner:
             confirmation_buckets.append(self._iter_confirmation_candidates(signal_name, filters_for_signal))
         grid_buckets: list[Iterable[PlannedSpec]] = []
         for signal_name in allowed:
-            grid_buckets.append(self._iter_grid_candidates(signal_name))
+            if signal_name == "multi_signal":
+                grid_buckets.append(self._iter_multi_signal_candidates())
+            else:
+                grid_buckets.append(self._iter_grid_candidates(signal_name))
         frontier_buckets = {signal_name: [] for signal_name in allowed}
         for parent_experiment_id, parent_spec in sorted(frontier_specs, key=lambda item: item[0]):
             if parent_spec.signal.name not in allowed:
@@ -315,6 +319,33 @@ class DeterministicPlanner:
                     ),
                     generator_kind="grid",
                 )
+
+    def _iter_multi_signal_candidates(self) -> Iterable[PlannedSpec]:
+        grammar = multi_signal_search_grammar()
+        for entry_shape in grammar.entry_shapes:
+            for exit_shape in grammar.exit_shapes:
+                for variant_index in range(_MULTI_SIGNAL_VARIANTS_PER_SHAPE):
+                    sizing, exec_config, filters = _parameter_combination_at(variant_index)
+                    spec = self.registry.validate_spec(
+                        StrategySpec(
+                            name="multi_signal_grid",
+                            signal=SignalSpec(
+                                "multi_signal",
+                                {
+                                    "entry_rule": _multi_signal_rule_payload(entry_shape, variant_index),
+                                    "exit_rule": _multi_signal_rule_payload(exit_shape, variant_index),
+                                },
+                            ),
+                            sizing=sizing,
+                            filters=filters,
+                            exec_config=exec_config,
+                            tags=(grammar.version,),
+                        )
+                    )
+                    yield PlannedSpec(
+                        spec=self._rename(spec),
+                        generator_kind="multi_signal_grid",
+                    )
 
     def _rename(self, spec: StrategySpec) -> StrategySpec:
         return StrategySpec.from_payload(
@@ -439,11 +470,34 @@ def _round_robin_deduped(buckets: Sequence[Iterable[PlannedSpec]], batch_size: i
 def _parameter_combinations() -> Iterable[tuple[SizingSpec, ExecConfig, tuple[FilterSpec, ...]]]:
     combination_count = len(_SIZING_GRID) * len(_EXECUTION_GRID) * len(_FILTER_GRID)
     for index in range(combination_count):
-        yield (
-            _SIZING_GRID[index % len(_SIZING_GRID)],
-            _EXECUTION_GRID[index % len(_EXECUTION_GRID)],
-            _FILTER_GRID[index % len(_FILTER_GRID)],
-        )
+        yield _parameter_combination_at(index)
+
+
+def _parameter_combination_at(index: int) -> tuple[SizingSpec, ExecConfig, tuple[FilterSpec, ...]]:
+    return (
+        _SIZING_GRID[index % len(_SIZING_GRID)],
+        _EXECUTION_GRID[index % len(_EXECUTION_GRID)],
+        _FILTER_GRID[index % len(_FILTER_GRID)],
+    )
+
+
+def _multi_signal_rule_payload(shape: MultiSignalRuleShape, variant_index: int) -> dict[str, object]:
+    grammar = multi_signal_search_grammar()
+    rule: dict[str, object] = {
+        "combiner": shape.combiner,
+        "signals": [
+            {
+                "name": predicate,
+                "params": grammar.predicate_param_grids[predicate][
+                    (variant_index + offset) % len(grammar.predicate_param_grids[predicate])
+                ],
+            }
+            for offset, predicate in enumerate(shape.predicates)
+        ],
+    }
+    if shape.k is not None:
+        rule["k"] = shape.k
+    return rule
 
 
 def _completed_entries_by_family(entries: Sequence[LedgerEntry]) -> dict[str, tuple[LedgerEntry, ...]]:

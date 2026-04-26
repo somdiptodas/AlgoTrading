@@ -82,6 +82,21 @@ def test_planner_does_not_eagerly_expand_grid_combinations(monkeypatch) -> None:
     assert planned[0].spec.signal.name == "ema_cross"
 
 
+def test_planner_generates_valid_multi_signal_candidates_with_minimum_rule_sizes() -> None:
+    planner = DeterministicPlanner(REGISTRY)
+
+    planned = planner.plan(batch_size=24, allowed_signal_families=("multi_signal",))
+
+    assert planned
+    assert {item.generator_kind for item in planned} == {"multi_signal_grid"}
+    assert {item.spec.signal.name for item in planned} == {"multi_signal"}
+    assert all("multi_signal_v1" in item.spec.tags for item in planned)
+    for item in planned:
+        validated = REGISTRY.validate_spec(item.spec)
+        assert len(validated.signal.params["entry_rule"]["signals"]) >= 3  # type: ignore[index]
+        assert len(validated.signal.params["exit_rule"]["signals"]) >= 3  # type: ignore[index]
+
+
 def test_planner_reserves_grid_slot_for_each_enabled_family_before_truncation() -> None:
     planner = DeterministicPlanner(REGISTRY)
 
