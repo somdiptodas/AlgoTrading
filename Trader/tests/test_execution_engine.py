@@ -57,3 +57,20 @@ def test_decision_engine_enters_from_entry_rule_while_flat() -> None:
     assert len(result.trades) == 1
     assert result.trades[0].entry_timestamp_utc == bars[1].timestamp_utc
     assert result.trades[0].entry_reason == "entry_passed"
+
+
+def test_decision_engine_exits_from_exit_rule_while_long() -> None:
+    bars = tuple(_bar(index, 100.0) for index in range(4))
+    decisions = (
+        _decision(True, False),
+        _decision(False, True),
+        _decision(False, False),
+        _decision(False, False),
+    )
+
+    result = run_long_only_decision_engine(bars, decisions, ExecConfig(initial_cash=100_000.0, slippage_bps=0.0))
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_timestamp_utc == bars[1].timestamp_utc
+    assert result.trades[0].exit_timestamp_utc == bars[2].timestamp_utc
+    assert result.trades[0].exit_reason == "exit_passed"

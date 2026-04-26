@@ -279,7 +279,7 @@ the checklist in each commit.
 
 - [x] Add a decision-based execution path to the engine.
 - [x] While flat, schedule entry from `entry_rule.passed`.
-- [ ] While long, schedule exit from `exit_rule.passed`.
+- [x] While long, schedule exit from `exit_rule.passed`.
 - [ ] Preserve hard exits:
   - [ ] stop loss
   - [ ] session close
