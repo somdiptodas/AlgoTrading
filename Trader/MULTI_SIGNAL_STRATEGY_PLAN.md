@@ -307,7 +307,7 @@ the checklist in each commit.
 - [x] Add a main dashboard page that lists all loop runs and links to generated
       run reports, experiment trade reports, markdown reports, loop JSON, and
       raw artifacts.
-- [ ] Add a CLI command to rebuild all generated reporting HTML from existing
+- [x] Add a CLI command to rebuild all generated reporting HTML from existing
       local artifacts.
 - [ ] Update the loop command to write or refresh the run HTML and main
       dashboard after each loop run.

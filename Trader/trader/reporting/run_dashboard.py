@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from trader.reporting.trade_visualization import write_trade_visualization
+
 
 RUN_REPORTS_DIRNAME = "loop_runs"
 DASHBOARD_FILENAME = "index.html"
@@ -42,11 +44,33 @@ class ReportPathConventions:
         return self.artifacts_dir / _safe_report_id(experiment_id)
 
 
+@dataclass(frozen=True)
+class RebuildReportsResult:
+    trade_reports: tuple[Path, ...]
+    run_reports: tuple[Path, ...]
+    dashboard_path: Path
+
+
 def _safe_report_id(value: str) -> str:
     candidate = str(value).strip()
     if not candidate or "/" in candidate or "\\" in candidate or candidate in {".", ".."}:
         raise ValueError(f"Report id is not a safe filename: {value!r}")
     return candidate
+
+
+def rebuild_reports(paths: ReportPathConventions) -> RebuildReportsResult:
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    trade_reports = tuple(
+        write_trade_visualization(experiment_dir, paths.experiment_trade_html_path(experiment_dir.name))
+        for experiment_dir in _experiment_artifact_dirs(paths)
+    )
+    run_reports = tuple(write_run_report_from_json(json_path, paths) for json_path in _loop_json_paths(paths))
+    dashboard_path = write_dashboard(paths)
+    return RebuildReportsResult(
+        trade_reports=trade_reports,
+        run_reports=run_reports,
+        dashboard_path=dashboard_path,
+    )
 
 
 def write_run_report_from_json(loop_json_path: Path, paths: ReportPathConventions) -> Path:
@@ -181,6 +205,25 @@ def _read_json_if_exists(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     return _read_json(path)
+
+
+def _experiment_artifact_dirs(paths: ReportPathConventions) -> tuple[Path, ...]:
+    if not paths.artifacts_dir.exists():
+        return tuple()
+    return tuple(
+        path
+        for path in sorted(paths.artifacts_dir.iterdir())
+        if path.is_dir()
+        and (path / "result.json").exists()
+        and (path / "trades.json").exists()
+        and (path / "equity.json").exists()
+    )
+
+
+def _loop_json_paths(paths: ReportPathConventions) -> tuple[Path, ...]:
+    if not paths.run_reports_dir.exists():
+        return tuple()
+    return tuple(sorted(paths.run_reports_dir.glob("*.json")))
 
 
 def _loop_run_records(paths: ReportPathConventions) -> list[dict[str, Any]]:
