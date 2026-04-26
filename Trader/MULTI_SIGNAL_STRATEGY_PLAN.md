@@ -315,7 +315,7 @@ the checklist in each commit.
       experiment artifact files.
 - [x] Update the trade HTML report to show rule-level entry and exit reasons.
 - [x] Add expandable vote details per trade.
-- [ ] Show passed and failed child signals distinctly.
+- [x] Show passed and failed child signals distinctly.
 - [ ] Keep legacy reports rendering when vote data is missing.
 - [ ] Add HTML rendering tests for run reports, dashboard links, and vote
       details.

@@ -175,6 +175,11 @@ def render_trade_visualization(experiment_dir: Path) -> str:
     .vote-group-title {{ color: var(--muted); font-size: 12px; font-weight: 700; margin-bottom: 4px; }}
     .vote-table {{ min-width: 440px; font-size: 12px; }}
     .vote-table th, .vote-table td {{ padding: 5px 6px; }}
+    .vote-status {{ font-weight: 700; }}
+    .vote-status.passed {{ color: var(--entry); }}
+    .vote-status.failed {{ color: var(--exit); }}
+    .vote-row.vote-passed .reason-code {{ color: var(--entry); }}
+    .vote-row.vote-failed .reason-code {{ color: var(--exit); }}
     .empty {{ color: var(--muted); margin: 8px 0 0; }}
   </style>
 </head>
@@ -416,15 +421,21 @@ def _vote_group(label: str, votes: Sequence[Mapping[str, Any]]) -> str:
 def _vote_row(vote: Mapping[str, Any]) -> str:
     passed = vote.get("passed")
     if passed is True:
-        status = "true"
+        status = "passed"
+        status_class = "passed"
+        row_class = "vote-passed"
     elif passed is False:
-        status = "false"
+        status = "failed"
+        status_class = "failed"
+        row_class = "vote-failed"
     else:
         status = "unknown"
+        status_class = "unknown"
+        row_class = "vote-unknown"
     return (
-        "<tr>"
+        f'<tr class="vote-row {row_class}">'
         f'<td class="reason-code">{html.escape(str(vote.get("name") or "unknown"))}</td>'
-        f"<td>{html.escape(status)}</td>"
+        f'<td><span class="vote-status {status_class}">{html.escape(status)}</span></td>'
         f"<td>{html.escape(str(vote.get('detail') or ''))}</td>"
         "</tr>"
     )
