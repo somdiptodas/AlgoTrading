@@ -98,3 +98,17 @@ def test_rsi_below_predicate_votes_when_rsi_is_under_threshold() -> None:
 
     assert [vote.passed for vote in votes] == [True, True]
     assert votes[0].detail == "RSI 8.33 < 30.00"
+
+
+def test_rsi_above_predicate_votes_when_rsi_is_over_threshold() -> None:
+    history = (_bar(0, 100.0), _bar(1, 99.0))
+    test = (_bar(2, 110.0), _bar(3, 111.0))
+
+    assert PREDICATES.validate_params("rsi_above", {"length": 2, "threshold": "70"}) == {
+        "length": 2,
+        "threshold": 70.0,
+    }
+    votes = PREDICATES.generate_votes("rsi_above", history, test, {"length": 2, "threshold": 70.0})
+
+    assert [vote.passed for vote in votes] == [True, True]
+    assert votes[0].detail == "RSI 91.67 > 70.00"

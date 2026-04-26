@@ -36,6 +36,21 @@ def generate_rsi_below_votes(
     return votes
 
 
+def generate_rsi_above_votes(
+    history_bars: tuple[MarketBar, ...],
+    test_bars: tuple[MarketBar, ...],
+    params: dict[str, object],
+) -> list[SignalVote]:
+    pipeline = FeaturePipeline.from_segments(history_bars, test_bars)
+    threshold = float(params["threshold"])
+    votes: list[SignalVote] = []
+    for value in pipeline.rsi_for_test(int(params["length"])):
+        passed = value is not None and value > threshold
+        detail = "RSI unavailable" if value is None else f"RSI {value:.2f} > {threshold:.2f}"
+        votes.append(SignalVote("rsi_above", passed, detail))
+    return votes
+
+
 def register(registry: PredicateRegistry) -> None:
     registry.register(
         "rsi_below",
@@ -43,5 +58,13 @@ def register(registry: PredicateRegistry) -> None:
             normalize_params=normalize_rsi_params,
             required_history=required_history,
             generate_votes=generate_rsi_below_votes,
+        ),
+    )
+    registry.register(
+        "rsi_above",
+        PredicateHandler(
+            normalize_params=normalize_rsi_params,
+            required_history=required_history,
+            generate_votes=generate_rsi_above_votes,
         ),
     )
