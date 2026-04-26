@@ -348,7 +348,7 @@ the checklist in each commit.
   - [x] best Sharpe-like score.
   - [x] best return.
   - [x] trade count.
-  - [ ] duplicate/reused candidate rate.
+  - [x] duplicate/reused candidate rate.
   - [ ] top-performing rule shapes.
   - [ ] whether improvement is happening run over run.
 
