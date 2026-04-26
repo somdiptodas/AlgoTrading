@@ -3,9 +3,11 @@ from trader.strategies.predicates.registry import (
     PredicateHandler,
     PredicateRegistry,
 )
+from trader.strategies.predicates import breakout as _breakout
 from trader.strategies.predicates import ema as _ema
 from trader.strategies.predicates import rsi as _rsi
 
+_breakout.register(PREDICATES)
 _ema.register(PREDICATES)
 _rsi.register(PREDICATES)
 

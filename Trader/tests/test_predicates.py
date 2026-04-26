@@ -140,3 +140,17 @@ def test_ema_trend_down_predicate_votes_when_fast_ema_is_below_slow_ema() -> Non
     assert votes[0].passed is True
     assert votes[0].detail.startswith("fast EMA ")
     assert " < slow EMA " in votes[0].detail
+
+
+def test_breakout_up_predicate_votes_when_close_exceeds_prior_high() -> None:
+    history = (_bar(0, 100.0), _bar(1, 101.0), _bar(2, 102.0))
+    test = (_bar(3, 103.0),)
+
+    assert PREDICATES.validate_params("breakout_up", {"window": 3, "buffer_bps": "0"}) == {
+        "window": 3,
+        "buffer_bps": 0.0,
+    }
+    assert PREDICATES.required_history("breakout_up", {"window": 3}) == 3
+    votes = PREDICATES.generate_votes("breakout_up", history, test, {"window": 3})
+
+    assert votes == [SignalVote("breakout_up", True, "close 103.00 > prior high 102.25")]
