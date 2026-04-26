@@ -20,12 +20,15 @@ from trader.ledger.entry import (
     experiment_result_to_payload,
     json_dumps,
     json_loads,
+    trade_from_payload,
+    trade_to_payload,
 )
 from trader.ledger.query import LedgerQueryHelper
 import trader.ledger.store as ledger_store_module
 from trader.ledger.store import SCHEMA, LedgerStore
 from trader.research.suppressor import SuppressedSpec
 from trader.reporting.report import render_experiment_report
+from trader.strategies.decisions import RuleDecision, SignalVote
 from trader.strategies.spec import SignalSpec, StrategySpec
 
 
@@ -141,6 +144,35 @@ def _sample_result_with_bar_count(count: int) -> ExperimentResult:
     )
     updated_fold = replace(fold, backtest=backtest)
     return replace(result, fold_results=(updated_fold,))
+
+
+def test_trade_payload_includes_optional_decision_trace_fields() -> None:
+    entry_rule = RuleDecision(True, "entry all passed", (SignalVote("entry_a", True, "ok"),))
+    exit_rule = RuleDecision(True, "exit any passed", (SignalVote("exit_a", True, "ok"),))
+    trade = Trade(
+        "2026-01-05T14:30:00+00:00",
+        "2026-01-05T14:35:00+00:00",
+        100.0,
+        101.0,
+        10,
+        5,
+        10.0,
+        1.0,
+        "exit any passed",
+        entry_reason="entry all passed",
+        entry_rule=entry_rule,
+        exit_rule=exit_rule,
+    )
+
+    payload = trade_to_payload(trade)
+    round_tripped = trade_from_payload(payload)
+
+    assert payload["entry_rule"] == {"passed": True, "reason": "entry all passed"}
+    assert payload["entry_votes"] == [{"name": "entry_a", "passed": True, "detail": "ok"}]
+    assert payload["exit_rule"] == {"passed": True, "reason": "exit any passed"}
+    assert payload["exit_votes"] == [{"name": "exit_a", "passed": True, "detail": "ok"}]
+    assert round_tripped.entry_rule == entry_rule
+    assert round_tripped.exit_rule == exit_rule
 
 
 def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:

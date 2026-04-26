@@ -10,6 +10,11 @@ from trader.data.models import MarketBar
 from trader.evaluation.runner import ExperimentResult, FoldResult
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
+from trader.strategies.decisions import (
+    RuleDecision,
+    rule_decision_from_payload,
+    signal_vote_to_payload,
+)
 from trader.strategies.spec import StrategySpec
 
 
@@ -67,7 +72,7 @@ def market_bar_from_payload(payload: dict[str, Any]) -> MarketBar:
 
 
 def trade_to_payload(trade: Trade) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "entry_timestamp_utc": trade.entry_timestamp_utc,
         "exit_timestamp_utc": trade.exit_timestamp_utc,
         "entry_price": trade.entry_price,
@@ -80,6 +85,9 @@ def trade_to_payload(trade: Trade) -> dict[str, object]:
         "exit_reason": trade.exit_reason,
         "cost_cash": trade.cost_cash,
     }
+    _add_rule_trace(payload, "entry", trade.entry_rule)
+    _add_rule_trace(payload, "exit", trade.exit_rule)
+    return payload
 
 
 def trade_from_payload(payload: dict[str, Any]) -> Trade:
@@ -95,7 +103,29 @@ def trade_from_payload(payload: dict[str, Any]) -> Trade:
         exit_reason=str(payload["exit_reason"]),
         cost_cash=float(payload.get("cost_cash", 0.0)),
         entry_reason=str(payload.get("entry_reason", "signal_on")),
+        entry_rule=_rule_trace_from_payload(payload, "entry"),
+        exit_rule=_rule_trace_from_payload(payload, "exit"),
     )
+
+
+def _add_rule_trace(payload: dict[str, object], prefix: str, rule: RuleDecision | None) -> None:
+    if rule is None:
+        return
+    payload[f"{prefix}_rule"] = {
+        "passed": rule.passed,
+        "reason": rule.reason,
+    }
+    payload[f"{prefix}_votes"] = [signal_vote_to_payload(vote) for vote in rule.votes]
+
+
+def _rule_trace_from_payload(payload: dict[str, Any], prefix: str) -> RuleDecision | None:
+    raw_rule = payload.get(f"{prefix}_rule")
+    if raw_rule is None:
+        return None
+    rule_payload = dict(raw_rule)
+    if "votes" not in rule_payload:
+        rule_payload["votes"] = payload.get(f"{prefix}_votes", ())
+    return rule_decision_from_payload(rule_payload)
 
 
 def backtest_to_payload(
