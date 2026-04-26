@@ -121,6 +121,21 @@ def test_multi_signal_rejects_entry_rules_with_fewer_than_three_signals() -> Non
         )
 
 
+def test_multi_signal_rejects_exit_rules_with_fewer_than_three_signals() -> None:
+    params = _multi_signal_params()
+    exit_rule = dict(params["exit_rule"])  # type: ignore[arg-type]
+    exit_rule["signals"] = exit_rule["signals"][:2]  # type: ignore[index]
+    params["exit_rule"] = exit_rule
+
+    with pytest.raises(ValueError, match="exit_rule\\.signals must contain at least 3"):
+        REGISTRY.validate_spec(
+            StrategySpec(
+                name="short_exit_rule",
+                signal=SignalSpec("multi_signal", params),
+            )
+        )
+
+
 def test_registry_generate_decisions_wraps_legacy_regimes() -> None:
     bars = tuple(_bar(index, 100.0 + index) for index in range(6))
     decisions = REGISTRY.generate_decisions(
