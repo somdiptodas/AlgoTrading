@@ -179,3 +179,12 @@ def test_vwap_distance_predicate_votes_when_price_is_far_enough_from_vwap() -> N
     assert votes == [
         SignalVote("vwap_distance", True, "VWAP distance 50.00 bps below in [25.00, 100000.00]")
     ]
+
+
+def test_vwap_reclaimed_predicate_votes_when_price_is_back_above_vwap() -> None:
+    test = (_bar(0, 100.10, vwap=100.0),)
+
+    assert PREDICATES.validate_params("vwap_reclaimed", {"min_bps": "5"}) == {"min_bps": 5.0}
+    votes = PREDICATES.generate_votes("vwap_reclaimed", (), test, {"min_bps": 5.0})
+
+    assert votes == [SignalVote("vwap_reclaimed", True, "close 100.10 >= VWAP reclaim 100.05")]

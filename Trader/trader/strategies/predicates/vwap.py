@@ -19,6 +19,14 @@ def normalize_vwap_distance_params(params: dict[str, object]) -> dict[str, objec
     return {"side": side, "min_bps": min_bps, "max_bps": max_bps}
 
 
+def normalize_vwap_reclaimed_params(params: dict[str, object]) -> dict[str, object]:
+    merged = {"min_bps": 0.0, **params}
+    min_bps = float(merged["min_bps"])
+    if min_bps < 0:
+        raise ValueError("vwap_reclaimed.min_bps must be >= 0")
+    return {"min_bps": min_bps}
+
+
 def required_history(params: dict[str, object]) -> int:
     return 0
 
@@ -44,6 +52,25 @@ def generate_vwap_distance_votes(
     return votes
 
 
+def generate_vwap_reclaimed_votes(
+    history_bars: tuple[MarketBar, ...],
+    test_bars: tuple[MarketBar, ...],
+    params: dict[str, object],
+) -> list[SignalVote]:
+    min_bps = float(params["min_bps"])
+    votes: list[SignalVote] = []
+    for bar in test_bars:
+        reclaim_level = None if bar.vwap is None or bar.vwap <= 0 else bar.vwap * (1.0 + min_bps / 10_000.0)
+        passed = reclaim_level is not None and bar.close >= reclaim_level
+        detail = (
+            "VWAP unavailable"
+            if reclaim_level is None
+            else f"close {bar.close:.2f} >= VWAP reclaim {reclaim_level:.2f}"
+        )
+        votes.append(SignalVote("vwap_reclaimed", passed, detail))
+    return votes
+
+
 def _vwap_distance_bps(bar: MarketBar, side: str) -> float | None:
     if bar.vwap is None or bar.vwap <= 0:
         return None
@@ -59,5 +86,13 @@ def register(registry: PredicateRegistry) -> None:
             normalize_params=normalize_vwap_distance_params,
             required_history=required_history,
             generate_votes=generate_vwap_distance_votes,
+        ),
+    )
+    registry.register(
+        "vwap_reclaimed",
+        PredicateHandler(
+            normalize_params=normalize_vwap_reclaimed_params,
+            required_history=required_history,
+            generate_votes=generate_vwap_reclaimed_votes,
         ),
     )
