@@ -376,6 +376,7 @@ def test_evaluate_preview_adds_cost_stress_after_base_gates_pass(monkeypatch) ->
         "trade_count": 10.0,
         "delta_buy_and_hold_return_pct": 0.25,
         "delta_exposure_adjusted_buy_and_hold_pct": 0.25,
+        "information_ratio_vs_buy_and_hold": 0.6,
     }
     fold_result = _fold_result(fold, metrics, bars)
 

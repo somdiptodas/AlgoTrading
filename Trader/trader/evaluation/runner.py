@@ -19,7 +19,12 @@ from trader.evaluation.baselines import (
     session_long_flat_at_close,
 )
 from trader.evaluation.data_quality import validate_bars
-from trader.evaluation.metrics import aggregate_metric_dicts, annualized_sharpe_for_backtests, calculate_metrics
+from trader.evaluation.metrics import (
+    aggregate_metric_dicts,
+    annualized_sharpe_for_backtests,
+    calculate_metrics,
+    information_ratio_vs_buy_and_hold,
+)
 from trader.evaluation.promotion import promotion_stage
 from trader.evaluation.robustness import RobustnessResult, assess_robustness
 from trader.evaluation.splits import Fold, build_walk_forward_folds
@@ -356,6 +361,7 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
+        metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
         return FoldResult(
             fold_id=fold.fold_id,
             train_start_utc=fold.train_start_utc,
@@ -409,6 +415,7 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
+        metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
         baselines = self._evaluate_baselines(
             spec,
             fold,
@@ -546,6 +553,7 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
+        metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
         metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
         baselines = evaluate_baselines(
             test_bars,
@@ -624,6 +632,9 @@ class EvaluationRunner:
             weights=[len(fold.backtest.bars) for fold in fold_results],
         )
         aggregate_metrics["annualized_sharpe"] = annualized_sharpe_for_backtests(
+            [fold.backtest for fold in fold_results]
+        )
+        aggregate_metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold(
             [fold.backtest for fold in fold_results]
         )
         return aggregate_metrics

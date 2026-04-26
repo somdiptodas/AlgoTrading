@@ -29,6 +29,7 @@ ContextInput = ReportSectionContext | str | Sequence[str] | Mapping[str, object]
 _PRIMARY_METRIC_ORDER = (
     "return_pct",
     "annualized_sharpe",
+    "information_ratio_vs_buy_and_hold",
     "sharpe_like",
     "max_drawdown_pct",
     "exposure_pct",
@@ -79,6 +80,7 @@ _ROBUSTNESS_ORDER = (
 _METRIC_LABELS = {
     "return_pct": "Return",
     "annualized_sharpe": "Annualized Sharpe",
+    "information_ratio_vs_buy_and_hold": "Information ratio vs buy and hold",
     "sharpe_like": "Sharpe-like",
     "max_drawdown_pct": "Max drawdown",
     "exposure_pct": "Exposure",

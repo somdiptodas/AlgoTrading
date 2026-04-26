@@ -101,6 +101,13 @@ def annualized_sharpe_for_backtests(
     return annualized_sharpe_from_returns(returns, periods_per_year=periods_per_year)
 
 
+def information_ratio_vs_buy_and_hold(results: Sequence[BacktestResult]) -> float:
+    daily_diffs = []
+    for result in results:
+        daily_diffs.extend(_daily_return_diffs_vs_buy_and_hold(result))
+    return annualized_sharpe_from_returns(daily_diffs, periods_per_year=TRADING_DAYS_PER_YEAR)
+
+
 def annualized_sharpe_from_returns(
     returns: Sequence[float],
     *,
@@ -140,3 +147,39 @@ def _period_returns(equity_curve: Sequence[float], *, starting_equity: float | N
         else:
             returns.append((current / previous) - 1.0)
     return returns
+
+
+def _daily_return_diffs_vs_buy_and_hold(result: BacktestResult) -> list[float]:
+    if not result.bars or not result.equity_curve:
+        return []
+    diffs: list[float] = []
+    previous_strategy_equity = result.initial_cash
+    previous_buy_hold_close = result.bars[0].close
+    for start, end in _session_ranges(result):
+        if end <= start or end > len(result.equity_curve):
+            continue
+        strategy_equity = result.equity_curve[end - 1]
+        strategy_return = _safe_return(strategy_equity, previous_strategy_equity)
+        buy_hold_close = result.bars[end - 1].close
+        buy_hold_return = _safe_return(buy_hold_close, previous_buy_hold_close)
+        diffs.append(strategy_return - buy_hold_return)
+        previous_strategy_equity = strategy_equity
+        previous_buy_hold_close = buy_hold_close
+    return diffs
+
+
+def _session_ranges(result: BacktestResult) -> tuple[tuple[int, int], ...]:
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    for index in range(1, len(result.bars)):
+        if result.bars[index].session_date != result.bars[start].session_date:
+            ranges.append((start, index))
+            start = index
+    ranges.append((start, len(result.bars)))
+    return tuple(ranges)
+
+
+def _safe_return(current: float, previous: float) -> float:
+    if math.isclose(previous, 0.0):
+        return 0.0
+    return (current / previous) - 1.0

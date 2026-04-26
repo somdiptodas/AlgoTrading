@@ -10,7 +10,14 @@ import pytest
 from trader.data.models import MarketBar
 from trader.cli.eval_cmd import _load_payload
 from trader.evaluation.baselines import baseline_deltas
-from trader.evaluation.metrics import MINUTE_BARS_PER_YEAR, aggregate_metric_dicts, annualized_sharpe, calculate_metrics
+from trader.evaluation.metrics import (
+    MINUTE_BARS_PER_YEAR,
+    TRADING_DAYS_PER_YEAR,
+    aggregate_metric_dicts,
+    annualized_sharpe,
+    calculate_metrics,
+    information_ratio_vs_buy_and_hold,
+)
 from trader.evaluation.splits import build_walk_forward_folds
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
@@ -85,6 +92,52 @@ def test_annualized_sharpe_uses_per_bar_returns_directly() -> None:
     expected = math.sqrt(MINUTE_BARS_PER_YEAR) * avg_return / math.sqrt(variance)
 
     assert annualized_sharpe(tuple(equity), starting_equity=starting_equity) == pytest.approx(expected)
+
+
+def test_information_ratio_vs_buy_and_hold_uses_daily_return_differences() -> None:
+    bars = []
+    closes = ((100.0, 100.0), (101.0, 102.0), (102.0, 100.0))
+    for day, day_closes in enumerate(closes):
+        session_start = datetime(2026, 1, 5 + day, 9, 30, tzinfo=NEW_YORK)
+        for minute, close in enumerate(day_closes):
+            timestamp = (session_start + timedelta(minutes=minute)).astimezone(timezone.utc)
+            bars.append(
+                MarketBar(
+                    timestamp_ms=int(timestamp.timestamp() * 1000),
+                    timestamp_utc=timestamp.isoformat(),
+                    open=close,
+                    high=close + 0.25,
+                    low=close - 0.25,
+                    close=close,
+                    volume=1_000.0,
+                )
+            )
+    result = BacktestResult(
+        bars=tuple(bars),
+        trades=(),
+        equity_curve=(100_000.0, 101_000.0, 102_010.0, 102_010.0, 102_010.0, 102_010.0),
+        initial_cash=100_000.0,
+        final_cash=102_010.0,
+    )
+    diffs = (0.01 - 0.0, 0.01 - 0.02, 0.0 - (-2.0 / 102.0))
+    avg = mean(diffs)
+    variance = mean([(value - avg) ** 2 for value in diffs])
+    expected = math.sqrt(TRADING_DAYS_PER_YEAR) * avg / math.sqrt(variance)
+
+    assert information_ratio_vs_buy_and_hold((result,)) == pytest.approx(expected)
+
+
+def test_information_ratio_vs_buy_and_hold_fails_closed_when_variance_is_zero() -> None:
+    bars = _market_bars(3)
+    result = BacktestResult(
+        bars=bars,
+        trades=(),
+        equity_curve=(100_000.0, 100_000.0, 100_000.0),
+        initial_cash=100_000.0,
+        final_cash=100_000.0,
+    )
+
+    assert information_ratio_vs_buy_and_hold((result,)) == 0.0
 
 
 def test_baseline_deltas_include_annualized_sharpe() -> None:

@@ -302,7 +302,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-26
   - Implementation: `DeterministicPlanner` now adds per-family `optuna_tpe` candidate buckets after 10 completed seed evaluations, uses completed ledger `return_pct` as the Optuna objective, persists per-family study state under `data/research/optuna/`, and wires the loop to pass ledger history plus the Optuna storage directory while preserving queue dedupe/scoring and no-lookahead evaluation boundaries.
   - Verification: focused planner/loop/queue tests passed (`.venv/bin/pytest -q tests/test_planner.py tests/test_loop_cmd.py tests/test_research_queue.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
-- [ ] **Add information ratio metric** vs B&H per-trading-day (V2). Promotion gate: `IR > 0.5` *and* exposure-adjusted delta > 0.
+- [x] **Add information ratio metric** vs B&H per-trading-day (V2). Promotion gate: `IR > 0.5` *and* exposure-adjusted delta > 0.
+  - Completed: 2026-04-26
+  - Implementation: Added `information_ratio_vs_buy_and_hold` from per-session active returns versus buy-and-hold, recomputed aggregate IR from pooled fold backtests, surfaced the metric in reports, and required IR > 0.5 alongside positive exposure-adjusted buy-and-hold edge for candidate promotion.
+  - Verification: focused metric/promotion/cost/robustness/queue/holdout tests passed (`.venv/bin/pytest -q tests/test_costs.py tests/test_splits_metrics_registry.py tests/test_promotion.py tests/test_robustness.py tests/test_research_queue.py tests/test_holdout.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
 - [ ] **Block-bootstrap p-value baseline** replacing single random-entry (S9, V5). 500 daily-block resamples; report `p_value_vs_random_entry`.
 - [ ] **Vectorize indicator primitives** to NumPy (S4). `ema`, `rsi`, `rolling_max_exclusive`, `rolling_min_exclusive`, `_intraday_realized_volatility_bps`, `_session_progress_stats`.
 - [ ] **Process-pool parallel Stage B** (S6). 4–8 workers, single-writer ledger.

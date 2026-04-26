@@ -4,7 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from trader.evaluation.promotion import MIN_PROMOTION_TRADE_COUNT, promotion_stage
+from trader.evaluation.promotion import (
+    MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD,
+    MIN_PROMOTION_TRADE_COUNT,
+    promotion_stage,
+)
 from trader.research.critic import HeuristicCritic, planning_penalty_from_critique
 
 
@@ -16,6 +20,7 @@ def _metrics(**overrides: float) -> dict[str, float]:
         "trade_count": MIN_PROMOTION_TRADE_COUNT,
         "delta_buy_and_hold_return_pct": -10.0,
         "delta_exposure_adjusted_buy_and_hold_pct": 0.25,
+        "information_ratio_vs_buy_and_hold": MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD + 0.1,
     }
     metrics.update(overrides)
     return metrics
@@ -44,6 +49,8 @@ def test_missing_robustness_stays_exploratory() -> None:
         {"trade_count": MIN_PROMOTION_TRADE_COUNT - 1.0},
         {"delta_exposure_adjusted_buy_and_hold_pct": 0.0},
         {"delta_exposure_adjusted_buy_and_hold_pct": -0.1},
+        {"information_ratio_vs_buy_and_hold": MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD},
+        {"information_ratio_vs_buy_and_hold": MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD - 0.1},
     ),
 )
 def test_edge_failures_stay_exploratory(metric_overrides: dict[str, float]) -> None:
