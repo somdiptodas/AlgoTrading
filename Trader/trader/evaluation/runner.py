@@ -96,6 +96,7 @@ class EvaluationRunner:
         self.registry = registry
         self._data_slice_cache: dict[tuple[object, ...], DataSlice] = {}
         self._split_cache: dict[tuple[str, int, int, int], tuple[str, tuple[Fold, ...]]] = {}
+        self._snapshot_subhash_cache: dict[tuple[str, int, int], str] = {}
         self._fold_result_cache: dict[tuple[object, ...], FoldResult] = {}
         self._baseline_cache: dict[tuple[object, ...], dict[str, dict[str, float]]] = {}
         self._indicator_cache: FeatureCache = {}
@@ -800,11 +801,22 @@ class EvaluationRunner:
         holdout_bars = data_slice.bars[holdout_start_idx:]
         research_slice = DataSlice(
             bars=research_bars,
-            snapshot_id=DataView.snapshot_hash(research_bars),
+            snapshot_id=self._snapshot_subhash(data_slice, 0, research_end_idx),
             first_timestamp_utc=research_bars[0].timestamp_utc,
             last_timestamp_utc=research_bars[-1].timestamp_utc,
         )
-        return research_slice, holdout_bars, DataView.snapshot_hash(holdout_bars)
+        return research_slice, holdout_bars, self._snapshot_subhash(data_slice, holdout_start_idx, len(data_slice.bars))
+
+    def _snapshot_subhash(self, data_slice: DataSlice, start_idx: int, end_idx: int) -> str:
+        if not hasattr(self, "_snapshot_subhash_cache"):
+            self._snapshot_subhash_cache = {}
+        cache_key = (data_slice.snapshot_id, start_idx, end_idx)
+        cached = self._snapshot_subhash_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        snapshot_id = DataView.snapshot_hash(data_slice.bars[start_idx:end_idx])
+        self._snapshot_subhash_cache[cache_key] = snapshot_id
+        return snapshot_id
 
     def _load_split_plan(
         self,

@@ -113,6 +113,29 @@ def test_split_research_and_holdout_reserves_recent_window() -> None:
     assert research_slice.bars[-1].dt_local.date().isoformat() == "2026-02-08"
 
 
+def test_split_research_and_holdout_caches_subhashes(monkeypatch) -> None:
+    runner = EvaluationRunner.__new__(EvaluationRunner)
+    data_slice = _data_slice(_daily_bars(130))
+    call_count = 0
+
+    def fake_snapshot_hash(bars: tuple[MarketBar, ...]) -> str:
+        nonlocal call_count
+        call_count += 1
+        return f"hash-{len(bars)}"
+
+    monkeypatch.setattr("trader.evaluation.runner.DataView.snapshot_hash", fake_snapshot_hash)
+
+    first = runner._split_research_and_holdout(data_slice, embargo_bars=1)
+    second = runner._split_research_and_holdout(data_slice, embargo_bars=1)
+
+    assert first[0].snapshot_id == second[0].snapshot_id
+    assert first[2] == second[2]
+    assert call_count == 2
+
+    runner._split_research_and_holdout(data_slice, embargo_bars=2)
+    assert call_count == 3
+
+
 def test_locked_holdout_fails_closed_when_slice_is_too_short() -> None:
     runner = EvaluationRunner.__new__(EvaluationRunner)
     data_slice = _data_slice(_daily_bars(10))
