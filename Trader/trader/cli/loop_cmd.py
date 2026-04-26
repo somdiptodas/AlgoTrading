@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -22,7 +23,7 @@ from trader.research.critic_memory import CriticRegionMemory
 from trader.research.frontier import FrontierManager
 from trader.research.generator import StrategyGenerator
 from trader.research.planner import DeterministicPlanner
-from trader.research.suppressor import RegionSuppressor, SuppressedSpec
+from trader.research.suppressor import RegionSuppressor, SuppressedSpec, WithinRunStageAFailureMemory
 from trader.strategies.registry import REGISTRY
 
 _ALL_SIGNAL_FAMILIES = ("ema_cross", "breakout", "rsi_reversion", "vwap_deviation", "composite")
@@ -40,6 +41,14 @@ TIMING_PHASES = (
     "artifact_write",
     "ledger_write",
 )
+
+
+@dataclass(frozen=True)
+class StageAPrescreenResult:
+    stage_b_candidates: tuple[ScoredCandidate, ...]
+    completed_results: tuple[tuple[ScoredCandidate, ExperimentResult], ...]
+    suppression_records: tuple[SuppressedSpec, ...]
+    timings: dict[str, float]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -105,9 +114,11 @@ def _max_preview_count(batch_size: int, preview_factor: int) -> int:
 def _suppression_audit_types(
     records: tuple[SuppressedSpec, ...],
     evaluated_spec_hashes: set[str],
+    *,
+    unevaluated_type: str = "preview_discarded",
 ) -> dict[str, str]:
     return {
-        record.spec_hash: "evaluated" if record.spec_hash in evaluated_spec_hashes else "preview_discarded"
+        record.spec_hash: "evaluated" if record.spec_hash in evaluated_spec_hashes else unevaluated_type
         for record in records
     }
 
@@ -141,7 +152,7 @@ def _stage_b_worker_count(candidate_count: int) -> int:
 def _evaluate_candidate_worker(payload: tuple[str, EvaluationPreview]) -> tuple[ExperimentResult, dict[str, float]]:
     database_path, preview = payload
     runner = EvaluationRunner(DataView(Path(database_path)), REGISTRY)
-    result = runner.evaluate_preview(preview, include_robustness=True)
+    result = runner.evaluate_preview(preview, include_robustness=True, run_stage_a=False)
     return result, dict(runner.phase_timings)
 
 
@@ -162,6 +173,48 @@ def _evaluate_selected_candidates(
         for phase in ("stage_a", "stage_b", "robustness_neighbors"):
             timings[phase] = timings.get(phase, 0.0) + worker_timings.get(phase, 0.0)
     return tuple(result for result, _ in outputs), timings
+
+
+def _mark_stage_a_passed(result: ExperimentResult) -> ExperimentResult:
+    return replace(
+        result,
+        aggregate_metrics={
+            **result.aggregate_metrics,
+            "stage_a_pass": 1.0,
+        },
+    )
+
+
+def _prescreen_stage_a_candidates(
+    selected_candidates: Sequence[ScoredCandidate],
+    runner: EvaluationRunner,
+    *,
+    suppressor_radius: float,
+) -> StageAPrescreenResult:
+    memory = WithinRunStageAFailureMemory(radius=suppressor_radius)
+    stage_b_candidates: list[ScoredCandidate] = []
+    completed_results: list[tuple[ScoredCandidate, ExperimentResult]] = []
+    suppression_records: list[SuppressedSpec] = []
+    timings = {"stage_a": 0.0}
+    for candidate in selected_candidates:
+        suppression_record = memory.assess(candidate.preview.spec)
+        if suppression_record is not None:
+            suppression_records.append(suppression_record)
+            continue
+        started = perf_counter()
+        stage_a_result = runner.evaluate_stage_a_preview(candidate.preview)
+        _add_timing(timings, "stage_a", started)
+        if stage_a_result is not None:
+            completed_results.append((candidate, stage_a_result))
+            memory.record(stage_a_result)
+        else:
+            stage_b_candidates.append(candidate)
+    return StageAPrescreenResult(
+        stage_b_candidates=tuple(stage_b_candidates),
+        completed_results=tuple(completed_results),
+        suppression_records=tuple(suppression_records),
+        timings=timings,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -226,10 +279,29 @@ def main(argv: list[str] | None = None) -> None:
     completed = []
     reused = queue_result.duplicate_count
     selected_candidates = queue_result.selected[: args.batch_size]
-    results, worker_timings = _evaluate_selected_candidates(selected_candidates, str(settings.database_path))
+    prescreen = _prescreen_stage_a_candidates(
+        selected_candidates,
+        runner,
+        suppressor_radius=args.suppressor_radius,
+    )
+    timings["stage_a"] += prescreen.timings.get("stage_a", 0.0)
+    results, worker_timings = _evaluate_selected_candidates(prescreen.stage_b_candidates, str(settings.database_path))
     for phase in ("stage_a", "stage_b", "robustness_neighbors"):
         timings[phase] += worker_timings.get(phase, 0.0)
-    for candidate, result in zip(selected_candidates, results):
+    result_by_key = {
+        candidate.preview.evaluation_key: result
+        for candidate, result in prescreen.completed_results
+    }
+    result_by_key.update(
+        {
+            candidate.preview.evaluation_key: _mark_stage_a_passed(result)
+            for candidate, result in zip(prescreen.stage_b_candidates, results)
+        }
+    )
+    for candidate in selected_candidates:
+        result = result_by_key.get(candidate.preview.evaluation_key)
+        if result is None:
+            continue
         critique = critic.critique(result)
         report_markdown = render_experiment_report(result, critique=critique.to_payload())
         started = perf_counter()
@@ -253,11 +325,19 @@ def main(argv: list[str] | None = None) -> None:
 
     # --- Persist suppression audit records to the ledger ---
     evaluated_spec_hashes = {result.spec_hash for result in completed}
-    audit_type_by_spec_hash = _suppression_audit_types(queue_result.suppression_records, evaluated_spec_hashes)
+    suppression_records = queue_result.suppression_records + prescreen.suppression_records
+    audit_type_by_spec_hash = {
+        **_suppression_audit_types(queue_result.suppression_records, evaluated_spec_hashes),
+        **_suppression_audit_types(
+            prescreen.suppression_records,
+            evaluated_spec_hashes,
+            unevaluated_type="stage_a_suppressed",
+        ),
+    }
     started = perf_counter()
     suppression_logged = ledger.log_suppression_batch(
         loop_run_id,
-        queue_result.suppression_records,
+        suppression_records,
         audit_type_by_spec_hash=audit_type_by_spec_hash,
     )
     _add_timing(timings, "ledger_write", started)
@@ -283,6 +363,9 @@ def main(argv: list[str] | None = None) -> None:
                 "suppressed_evaluated": sum(1 for value in audit_type_by_spec_hash.values() if value == "evaluated"),
                 "suppressed_preview_discarded": sum(
                     1 for value in audit_type_by_spec_hash.values() if value == "preview_discarded"
+                ),
+                "suppressed_stage_a_suppressed": sum(
+                    1 for value in audit_type_by_spec_hash.values() if value == "stage_a_suppressed"
                 ),
             },
             "rejected": list(generated.rejected),

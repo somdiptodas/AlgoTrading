@@ -116,6 +116,7 @@ _FAILURE_CHECK_WEIGHTS = {
 }
 _LARGE_SUPPRESSION_FAILURE_COUNT = 2
 _SINGLE_FAILURE_WEIGHT_MULTIPLIER = 0.5
+_WITHIN_RUN_STAGE_A_FAILURE_THRESHOLD = 2
 
 
 def _failed_gate_checks(entry: Any) -> tuple[str, ...]:
@@ -276,7 +277,67 @@ class RegionSuppressor:
         }
 
 
+class WithinRunStageAFailureMemory:
+    def __init__(
+        self,
+        *,
+        registry: Any = REGISTRY,
+        radius: float = 0.15,
+        weight_cap: float = 40.0,
+    ) -> None:
+        if radius <= 0:
+            raise ValueError("radius must be > 0")
+        if weight_cap < 0:
+            raise ValueError("weight_cap must be >= 0")
+        self.radius = radius
+        self.weight_cap = weight_cap
+        self._parameter_scales_by_family = _parameter_scales(registry)
+        self._failures: list[Any] = []
+
+    def record(self, result: Any) -> None:
+        if result.robustness_checks.get("stage_a_pass") is False:
+            self._failures.append(result)
+
+    def assess(self, spec: StrategySpec) -> SuppressedSpec | None:
+        same_family = [failure for failure in self._failures if failure.spec.signal.name == spec.signal.name]
+        if len(same_family) < _WITHIN_RUN_STAGE_A_FAILURE_THRESHOLD:
+            return None
+        candidate_payload = spec.to_payload(include_name=False)
+        nearest: Any | None = None
+        nearest_dist = float("inf")
+        count_in_radius = 0
+        for failure in same_family:
+            dist = spec_distance(
+                candidate_payload,
+                failure.spec.to_payload(include_name=False),
+                parameter_scales=self._parameter_scales_by_family.get(spec.signal.name),
+            )
+            if dist < nearest_dist:
+                nearest = failure
+                nearest_dist = dist
+            if dist < self.radius:
+                count_in_radius += 1
+        if nearest is None or count_in_radius < _WITHIN_RUN_STAGE_A_FAILURE_THRESHOLD:
+            return None
+        return SuppressedSpec(
+            spec_hash=spec.spec_hash(),
+            signal_family=spec.signal.name,
+            nearest_failure_experiment_id=nearest.experiment_id,
+            nearest_failure_distance=round(nearest_dist, 6),
+            failed_check_names=_stage_a_failed_check_names(nearest),
+            failure_count_in_radius=count_in_radius,
+            suppression_weight=self.weight_cap,
+        )
+
+
 def _failure_weight(failed_check_names: Sequence[str]) -> float:
     if not failed_check_names:
         return 0.0
     return max(_FAILURE_CHECK_WEIGHTS.get(name, 0.4) for name in failed_check_names)
+
+
+def _stage_a_failed_check_names(result: Any) -> tuple[str, ...]:
+    return tuple(
+        key for key, value in sorted(result.robustness_checks.items())
+        if key.startswith("stage_a_reject_") and bool(value)
+    )

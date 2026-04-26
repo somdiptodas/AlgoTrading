@@ -329,7 +329,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: Added persistent `critic_memory.json` with deterministic per-region records derived from completed critique planning penalties, load/seed/rewrite wiring in the loop, and candidate-queue scoring that uses region penalties before falling back to family-level critic penalties when no memory exists.
   - Verification: focused critic-memory/queue/loop tests passed (`.venv/bin/pytest -q tests/test_critic_memory.py tests/test_research_queue.py tests/test_loop_cmd.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found and then re-checked the startup-load blocker with no blockers remaining.
-- [ ] **Within-run failure memory** (rev 1 P2 carryover): after first 2 stage-A failures from a region, suppress remaining stage-B from that region in the *same* loop.
+- [x] **Within-run failure memory** (rev 1 P2 carryover): after first 2 stage-A failures from a region, suppress remaining stage-B from that region in the *same* loop.
+  - Completed: 2026-04-25
+  - Implementation: Added serial Stage-A prescreening before process-pool Stage B, an in-memory same-region Stage-A failure suppressor using existing normalized parameter geometry, distinct `stage_a_suppressed` audit logging for selected candidates skipped before Stage B, and Stage-A pass carry-forward for survivors evaluated by workers.
+  - Verification: focused suppressor/loop/robustness/queue tests passed (`.venv/bin/pytest -q tests/test_suppressor.py tests/test_loop_cmd.py tests/test_robustness.py tests/test_research_queue.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found and then re-checked Stage-A pass/audit-type blockers with no blockers remaining.
 - [ ] **Holdout p-value** (V5) and direction-match gate before `candidate` promotion.
 - [ ] **Regime-conditional return reporting** (V4).
 - [ ] **Top-N trade concentration check** (V6) added to robustness.

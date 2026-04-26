@@ -5,8 +5,10 @@ from types import SimpleNamespace
 
 from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES
 from trader.cli.loop_cmd import _add_timing, _max_preview_count, _new_timings, _planned_spec_count, _suppression_audit_types, _timing_payload
-from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _load_or_seed_critic_memory, _stage_b_worker_count, build_parser
+from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _load_or_seed_critic_memory, _mark_stage_a_passed, _prescreen_stage_a_candidates, _stage_b_worker_count, build_parser
+from trader.evaluation.runner import ExperimentResult
 from trader.research.suppressor import SuppressedSpec
+from trader.strategies.spec import SignalSpec, StrategySpec
 
 
 def test_planned_spec_count_uses_named_overplan_factor_and_floor() -> None:
@@ -29,6 +31,10 @@ def test_suppression_audit_types_separate_evaluated_from_discarded() -> None:
     assert _suppression_audit_types(records, {"evaluated_hash"}) == {
         "evaluated_hash": "evaluated",
         "discarded_hash": "preview_discarded",
+    }
+    assert _suppression_audit_types(records, set(), unevaluated_type="stage_a_suppressed") == {
+        "evaluated_hash": "stage_a_suppressed",
+        "discarded_hash": "stage_a_suppressed",
     }
 
 
@@ -113,9 +119,10 @@ def test_evaluate_candidate_worker_reopens_database_path(monkeypatch) -> None:
             seen["data_view"] = data_view
             seen["registry"] = registry
 
-        def evaluate_preview(self, preview, *, include_robustness: bool):
+        def evaluate_preview(self, preview, *, include_robustness: bool, run_stage_a: bool):
             seen["preview"] = preview
             seen["include_robustness"] = include_robustness
+            seen["run_stage_a"] = run_stage_a
             return "result"
 
     monkeypatch.setattr("trader.cli.loop_cmd.DataView", FakeDataView)
@@ -128,6 +135,79 @@ def test_evaluate_candidate_worker_reopens_database_path(monkeypatch) -> None:
     assert seen["database_path"] == Path("/tmp/market.db")
     assert seen["preview"] == "preview"
     assert seen["include_robustness"] is True
+    assert seen["run_stage_a"] is False
+
+
+def test_prescreen_stage_a_suppresses_third_nearby_failure(monkeypatch) -> None:
+    specs = (
+        StrategySpec(
+            name="near_1",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        ),
+        StrategySpec(
+            name="near_2",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        ),
+        StrategySpec(
+            name="near_3",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        ),
+        StrategySpec(
+            name="far",
+            signal=SignalSpec("breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0}),
+        ),
+    )
+    candidates = tuple(
+        SimpleNamespace(preview=SimpleNamespace(spec=spec, evaluation_key=f"key_{index}"))
+        for index, spec in enumerate(specs)
+    )
+
+    def stage_a_result(preview):
+        if preview.spec.signal.name == "breakout":
+            return None
+        return SimpleNamespace(
+            experiment_id=preview.evaluation_key,
+            spec=preview.spec,
+            robustness_checks={
+                "stage_a_pass": False,
+                "stage_a_reject_non_positive_return": True,
+            },
+        )
+
+    runner = SimpleNamespace(evaluate_stage_a_preview=stage_a_result)
+    monkeypatch.setattr("trader.cli.loop_cmd.perf_counter", lambda: 1.0)
+
+    result = _prescreen_stage_a_candidates(candidates, runner, suppressor_radius=0.2)
+
+    assert [item[0].preview.spec.name for item in result.completed_results] == ["near_1", "near_2"]
+    assert [candidate.preview.spec.name for candidate in result.stage_b_candidates] == ["far"]
+    assert len(result.suppression_records) == 1
+    assert result.suppression_records[0].spec_hash == specs[2].spec_hash()
+
+
+def test_mark_stage_a_passed_carries_prescreen_evidence() -> None:
+    spec = StrategySpec(
+        name="ema",
+        signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+    )
+    result = ExperimentResult(
+        experiment_id="exp_1",
+        status="completed",
+        spec=spec,
+        spec_hash=spec.spec_hash(),
+        data_snapshot_id="snapshot",
+        split_plan_id="split",
+        cost_model_id=spec.exec_config.cost_model_id(),
+        aggregate_metrics={"return_pct": 1.0},
+        fold_results=tuple(),
+        robustness_checks={},
+        promotion_stage="exploratory",
+    )
+
+    marked = _mark_stage_a_passed(result)
+
+    assert marked is not result
+    assert marked.aggregate_metrics == {"return_pct": 1.0, "stage_a_pass": 1.0}
 
 
 def test_load_or_seed_critic_memory_consumes_existing_disk_file(tmp_path: Path, monkeypatch) -> None:

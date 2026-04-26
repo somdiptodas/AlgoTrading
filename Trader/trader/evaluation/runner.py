@@ -152,43 +152,23 @@ class EvaluationRunner:
         *,
         include_robustness: bool = True,
         experiment_id: str | None = None,
+        run_stage_a: bool = True,
     ) -> ExperimentResult:
         experiment_id = experiment_id or sha256(preview.evaluation_key.encode("utf-8")).hexdigest()[:16]
-        stage_a = None
-        if include_robustness:
+        stage_a_passed = False
+        if include_robustness and run_stage_a:
             started = perf_counter()
-            stage_a = self._evaluate_stage_a(preview)
+            stage_a_result = self.evaluate_stage_a_preview(preview, experiment_id=experiment_id)
             self._add_phase_timing("stage_a", started)
-        if stage_a is not None:
-            stage_a_fold, stage_a_metrics = stage_a
-            reject_reasons = self._stage_a_reject_reasons(stage_a_metrics)
-            if reject_reasons:
-                stage_a_metrics = dict(stage_a_metrics)
-                stage_a_metrics["stage_a_pass"] = 0.0
-                stage_a_metrics["stage_a_reject_count"] = float(len(reject_reasons))
-                return ExperimentResult(
-                    experiment_id=experiment_id,
-                    status="completed",
-                    spec=preview.spec,
-                    spec_hash=preview.spec.spec_hash(),
-                    data_snapshot_id=preview.data_slice.snapshot_id,
-                    split_plan_id=preview.split_plan_id,
-                    cost_model_id=preview.cost_model_id,
-                    aggregate_metrics=stage_a_metrics,
-                    fold_results=(stage_a_fold,),
-                    robustness_checks={
-                        "stage_a_pass": False,
-                        **{f"stage_a_reject_{reason}": True for reason in reject_reasons},
-                    },
-                    promotion_stage="exploratory",
-                    holdout_result=None,
-                )
+            if stage_a_result is not None:
+                return stage_a_result
+            stage_a_passed = True
 
         started = perf_counter()
         fold_results, aggregate_metrics = self._evaluate_preview_folds(preview.spec, preview)
         self._add_phase_timing("stage_b", started)
         aggregate_metrics = dict(aggregate_metrics)
-        if stage_a is not None:
+        if stage_a_passed:
             aggregate_metrics["stage_a_pass"] = 1.0
         def neighbor_metric_fn(neighbor_spec: StrategySpec) -> dict[str, float]:
             started = perf_counter()
@@ -227,7 +207,7 @@ class EvaluationRunner:
                 for fold, fold_result in zip(preview.folds, fold_results)
             )
             aggregate_metrics = self._aggregate_fold_results(fold_results)
-            if stage_a is not None:
+            if stage_a_passed:
                 aggregate_metrics["stage_a_pass"] = 1.0
             self._add_phase_timing("stage_b", started)
         holdout_result = None
@@ -258,6 +238,41 @@ class EvaluationRunner:
             robustness_checks=robustness_checks,
             promotion_stage=stage,
             holdout_result=holdout_result,
+        )
+
+    def evaluate_stage_a_preview(
+        self,
+        preview: EvaluationPreview,
+        *,
+        experiment_id: str | None = None,
+    ) -> ExperimentResult | None:
+        experiment_id = experiment_id or sha256(preview.evaluation_key.encode("utf-8")).hexdigest()[:16]
+        stage_a = self._evaluate_stage_a(preview)
+        if stage_a is None:
+            return None
+        stage_a_fold, stage_a_metrics = stage_a
+        reject_reasons = self._stage_a_reject_reasons(stage_a_metrics)
+        if not reject_reasons:
+            return None
+        stage_a_metrics = dict(stage_a_metrics)
+        stage_a_metrics["stage_a_pass"] = 0.0
+        stage_a_metrics["stage_a_reject_count"] = float(len(reject_reasons))
+        return ExperimentResult(
+            experiment_id=experiment_id,
+            status="completed",
+            spec=preview.spec,
+            spec_hash=preview.spec.spec_hash(),
+            data_snapshot_id=preview.data_slice.snapshot_id,
+            split_plan_id=preview.split_plan_id,
+            cost_model_id=preview.cost_model_id,
+            aggregate_metrics=stage_a_metrics,
+            fold_results=(stage_a_fold,),
+            robustness_checks={
+                "stage_a_pass": False,
+                **{f"stage_a_reject_{reason}": True for reason in reject_reasons},
+            },
+            promotion_stage="exploratory",
+            holdout_result=None,
         )
 
     def _add_phase_timing(self, phase: str, started: float) -> None:

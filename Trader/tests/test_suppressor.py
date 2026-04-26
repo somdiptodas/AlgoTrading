@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from trader.research.suppressor import RegionSuppressor, _parameter_scales, spec_distance
+from trader.research.suppressor import RegionSuppressor, WithinRunStageAFailureMemory, _parameter_scales, spec_distance
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import SignalSpec, StrategySpec
 
@@ -20,6 +20,17 @@ def _failure(
         experiment_id=experiment_id,
         spec=spec,
         robustness_checks=robustness_checks,
+    )
+
+
+def _stage_a_result(experiment_id: str, spec: StrategySpec) -> SimpleNamespace:
+    return SimpleNamespace(
+        experiment_id=experiment_id,
+        spec=spec,
+        robustness_checks={
+            "stage_a_pass": False,
+            "stage_a_reject_non_positive_return": True,
+        },
     )
 
 
@@ -108,3 +119,30 @@ def test_suppressor_keeps_cross_family_failures_isolated() -> None:
     )
 
     assert RegionSuppressor((ema_failure,), radius=0.2, weight_cap=40.0).assess(rsi_candidate) is None
+
+
+def test_within_run_stage_a_memory_suppresses_after_two_nearby_failures() -> None:
+    spec = _spec("candidate", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0})
+    memory = WithinRunStageAFailureMemory(radius=0.2, weight_cap=40.0)
+
+    memory.record(_stage_a_result("failure_1", spec))
+    assert memory.assess(spec) is None
+
+    memory.record(_stage_a_result("failure_2", spec))
+    record = memory.assess(spec)
+
+    assert record is not None
+    assert record.failure_count_in_radius == 2
+    assert record.failed_check_names == ("stage_a_reject_non_positive_return",)
+
+
+def test_within_run_stage_a_memory_keeps_far_and_cross_family_failures_isolated() -> None:
+    failed = _spec("failed", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0})
+    far = _spec("far", "ema_cross", {"fast_length": 34, "slow_length": 144, "signal_buffer_bps": 3.0})
+    breakout = _spec("breakout", "breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0})
+    memory = WithinRunStageAFailureMemory(radius=0.1, weight_cap=40.0)
+    memory.record(_stage_a_result("failure_1", failed))
+    memory.record(_stage_a_result("failure_2", failed))
+
+    assert memory.assess(far) is None
+    assert memory.assess(breakout) is None
