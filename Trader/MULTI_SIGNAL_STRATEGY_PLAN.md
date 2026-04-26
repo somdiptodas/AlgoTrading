@@ -271,7 +271,7 @@ the checklist in each commit.
 - [x] Canonicalize child signal params for stable hashing and dedupe.
 - [x] Compute required history as the max required history across entry and exit
       children.
-- [ ] Add tests for asymmetric entry and exit rules.
+- [x] Add tests for asymmetric entry and exit rules.
 - [ ] Add tests that prove changing future bars does not alter current
       decisions.
 

@@ -233,6 +233,55 @@ def test_multi_signal_rejects_invalid_k_of_n_rules() -> None:
         )
 
 
+def test_multi_signal_supports_asymmetric_entry_and_exit_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        multi_signal,
+        "PREDICATES",
+        _FakePredicates(
+            {
+                "entry_a": [True, False, True],
+                "entry_b": [True, True, False],
+                "entry_c": [True, True, True],
+                "exit_a": [False, False, True],
+                "exit_b": [False, True, False],
+                "exit_c": [False, False, False],
+            }
+        ),
+    )
+    bars = tuple(_bar(index, 100.0 + index) for index in range(3))
+    spec = StrategySpec(
+        name="multi_signal_asymmetric_rules",
+        signal=SignalSpec(
+            "multi_signal",
+            {
+                "entry_rule": {
+                    "combiner": "all",
+                    "signals": [
+                        {"name": "entry_a", "params": {}},
+                        {"name": "entry_b", "params": {}},
+                        {"name": "entry_c", "params": {}},
+                    ],
+                },
+                "exit_rule": {
+                    "combiner": "any",
+                    "signals": [
+                        {"name": "exit_a", "params": {}},
+                        {"name": "exit_b", "params": {}},
+                        {"name": "exit_c", "params": {}},
+                    ],
+                },
+            },
+        ),
+    )
+
+    decisions = REGISTRY.generate_decisions(spec, tuple(), bars)
+
+    assert [decision.entry.passed for decision in decisions] == [True, False, False]
+    assert [decision.exit.passed for decision in decisions] == [False, True, True]
+    assert [vote.name for vote in decisions[0].entry.votes] == ["entry_a", "entry_b", "entry_c"]
+    assert [vote.name for vote in decisions[0].exit.votes] == ["exit_a", "exit_b", "exit_c"]
+
+
 def test_multi_signal_canonicalizes_child_order_for_stable_hashing() -> None:
     base = StrategySpec(
         name="multi_signal_order_a",
