@@ -4,7 +4,15 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from trader.strategies.decisions import RuleDecision, SignalVote, TradeDecision
+from trader.strategies.decisions import (
+    RuleDecision,
+    SignalVote,
+    TradeDecision,
+    trade_decision_from_json,
+    trade_decision_from_payload,
+    trade_decision_to_json,
+    trade_decision_to_payload,
+)
 
 
 def test_signal_vote_is_immutable() -> None:
@@ -37,3 +45,29 @@ def test_trade_decision_is_immutable_and_keeps_entry_exit_decisions() -> None:
     assert decision.exit == exit
     with pytest.raises(FrozenInstanceError):
         decision.exit = RuleDecision(True, "changed")  # type: ignore[misc]
+
+
+def test_trade_decision_payload_and_json_round_trip() -> None:
+    decision = TradeDecision(
+        entry=RuleDecision(
+            True,
+            "k_of_n passed: 2/3 signals",
+            (
+                SignalVote("rsi_below", True, "RSI 28.4 < 30.0"),
+                SignalVote("vwap_distance", False, "VWAP distance 8.0 < 25.0 bps"),
+            ),
+        ),
+        exit=RuleDecision(
+            False,
+            "any failed: 0/2 signals",
+            (SignalVote("rsi_above", False),),
+        ),
+    )
+
+    payload = trade_decision_to_payload(decision)
+    encoded = trade_decision_to_json(decision)
+
+    assert trade_decision_from_payload(payload) == decision
+    assert trade_decision_from_json(encoded) == decision
+    assert '": ' not in encoded
+    assert ', "' not in encoded
