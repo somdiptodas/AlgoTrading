@@ -300,7 +300,7 @@ the checklist in each commit.
 
 ### Phase 6: Reporting And Visualizer
 
-- [ ] Add stable report path conventions for generated run, dashboard, and
+- [x] Add stable report path conventions for generated run, dashboard, and
       experiment HTML files.
 - [ ] Generate one HTML report per loop run from loop JSON and ledger/artifact
       data.
