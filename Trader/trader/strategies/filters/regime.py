@@ -4,6 +4,8 @@ import math
 from collections import OrderedDict
 from typing import Sequence
 
+import numpy as np
+
 from trader.data.models import MarketBar
 
 
@@ -201,20 +203,27 @@ def generate_vwap_distance_mask(
 
 
 def _intraday_realized_volatility_bps(bars: Sequence[MarketBar], lookback_bars: int) -> list[float | None]:
-    returns: list[float | None] = [None]
-    for previous, current in zip(bars, bars[1:]):
-        if previous.session_date != current.session_date or previous.close <= 0:
-            returns.append(None)
-        else:
-            returns.append(abs((current.close / previous.close) - 1.0) * 10_000.0)
-    realized: list[float | None] = []
-    for index in range(len(bars)):
-        window = returns[index - lookback_bars + 1 : index + 1]
-        if len(window) != lookback_bars or any(value is None for value in window):
-            realized.append(None)
-        else:
-            realized.append(math.sqrt(sum(float(value) ** 2 for value in window) / lookback_bars))
-    return realized
+    n = len(bars)
+    if n == 0:
+        return []
+    closes = np.fromiter((bar.close for bar in bars), dtype=np.float64, count=n)
+    sessions = np.fromiter((bar.session_date for bar in bars), dtype=object, count=n)
+    valid_returns = np.zeros(n, dtype=bool)
+    if n > 1:
+        valid_returns[1:] = (sessions[1:] == sessions[:-1]) & (closes[:-1] > 0.0)
+    squared_returns = np.zeros(n, dtype=np.float64)
+    if valid_returns.any():
+        valid_indices = np.flatnonzero(valid_returns)
+        returns = ((closes[valid_indices] / closes[valid_indices - 1]) - 1.0) * 10_000.0
+        squared_returns[valid_indices] = returns * returns
+    kernel = np.ones(lookback_bars, dtype=np.float64)
+    rolling_counts = np.convolve(valid_returns.astype(np.float64), kernel, mode="full")[:n]
+    rolling_sums = np.convolve(squared_returns, kernel, mode="full")[:n]
+    realized = np.sqrt(rolling_sums / lookback_bars)
+    return [
+        float(realized[index]) if rolling_counts[index] == lookback_bars else None
+        for index in range(n)
+    ]
 
 
 def _prior_session_range_bps(bars: Sequence[MarketBar]) -> dict[str, float]:
@@ -235,29 +244,44 @@ def _prior_session_range_bps(bars: Sequence[MarketBar]) -> dict[str, float]:
 
 
 def _session_progress_stats(bars: Sequence[MarketBar]) -> list[tuple[int, float, float, float]]:
-    stats: list[tuple[int, float, float, float]] = []
-    session_date: str | None = None
-    session_open = 0.0
-    session_high = 0.0
-    session_low = 0.0
-    count = 0
-    for bar in bars:
-        if bar.session_date != session_date:
-            session_date = bar.session_date
-            session_open = bar.open
-            session_high = bar.high
-            session_low = bar.low
-            count = 0
-        session_high = max(session_high, bar.high)
-        session_low = min(session_low, bar.low)
-        count += 1
-        move = abs(bar.close - session_open)
-        range_ = session_high - session_low
-        move_bps = (move / session_open) * 10_000.0 if session_open > 0 else 0.0
-        range_bps = (range_ / session_open) * 10_000.0 if session_open > 0 else 0.0
-        efficiency = move / range_ if range_ > 0 else 0.0
-        stats.append((count, move_bps, range_bps, efficiency))
-    return stats
+    n = len(bars)
+    if n == 0:
+        return []
+    opens = np.fromiter((bar.open for bar in bars), dtype=np.float64, count=n)
+    highs = np.fromiter((bar.high for bar in bars), dtype=np.float64, count=n)
+    lows = np.fromiter((bar.low for bar in bars), dtype=np.float64, count=n)
+    closes = np.fromiter((bar.close for bar in bars), dtype=np.float64, count=n)
+    sessions = np.fromiter((bar.session_date for bar in bars), dtype=object, count=n)
+    starts = np.r_[0, np.flatnonzero(sessions[1:] != sessions[:-1]) + 1]
+    ends = np.r_[starts[1:], n]
+
+    counts = np.empty(n, dtype=np.int64)
+    move_bps = np.empty(n, dtype=np.float64)
+    range_bps = np.empty(n, dtype=np.float64)
+    efficiency = np.empty(n, dtype=np.float64)
+    for start, end in zip(starts, ends):
+        session_open = opens[start]
+        session_highs = np.maximum.accumulate(highs[start:end])
+        session_lows = np.minimum.accumulate(lows[start:end])
+        ranges = session_highs - session_lows
+        moves = np.abs(closes[start:end] - session_open)
+        counts[start:end] = np.arange(1, end - start + 1)
+        if session_open > 0.0:
+            move_bps[start:end] = (moves / session_open) * 10_000.0
+            range_bps[start:end] = (ranges / session_open) * 10_000.0
+        else:
+            move_bps[start:end] = 0.0
+            range_bps[start:end] = 0.0
+        efficiency[start:end] = np.divide(
+            moves,
+            ranges,
+            out=np.zeros_like(moves),
+            where=ranges > 0.0,
+        )
+    return [
+        (int(counts[index]), float(move_bps[index]), float(range_bps[index]), float(efficiency[index]))
+        for index in range(n)
+    ]
 
 
 def _percentile_rank(value: float | None, sample: Sequence[float]) -> float | None:

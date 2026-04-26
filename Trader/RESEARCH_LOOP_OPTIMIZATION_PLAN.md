@@ -310,7 +310,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-26
   - Implementation: Random-entry baselines now compute a deterministic 500-sample daily-block bootstrap p-value, aggregate research p-values from fold bootstrap samples instead of averaging fold p-values, gate candidates on `p_value_vs_random_entry < 0.10`, demote research candidates when holdout p-value or directional match fails, and skip bootstrap baselines for robustness-neighbor metrics.
   - Verification: focused baseline/promotion/cost/holdout/robustness/queue tests passed (`.venv/bin/pytest -q tests/test_baselines.py tests/test_promotion.py tests/test_costs.py tests/test_holdout.py tests/test_robustness.py tests/test_research_queue.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier re-check found no blockers.
-- [ ] **Vectorize indicator primitives** to NumPy (S4). `ema`, `rsi`, `rolling_max_exclusive`, `rolling_min_exclusive`, `_intraday_realized_volatility_bps`, `_session_progress_stats`.
+- [x] **Vectorize indicator primitives** to NumPy (S4). `ema`, `rsi`, `rolling_max_exclusive`, `rolling_min_exclusive`, `_intraday_realized_volatility_bps`, `_session_progress_stats`.
+  - Completed: 2026-04-25
+  - Implementation: Added NumPy as a runtime dependency, moved EMA/RSI/rolling primitive internals onto NumPy arrays while preserving list/`None` return contracts, vectorized exclusive rolling extrema, and rewrote intraday-volatility/session-progress helpers with array math scoped to current sessions.
+  - Verification: focused primitive/leakage/regime/cache tests passed (`.venv/bin/pytest -q tests/test_feature_primitives.py tests/test_leakage.py tests/test_regime_filters.py tests/test_indicator_cache.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
 - [ ] **Process-pool parallel Stage B** (S6). 4–8 workers, single-writer ledger.
 - [ ] **Down-sample stored equity to 30-minute granularity** (S10). Per-minute reconstructable from `trades.json`.
 

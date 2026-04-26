@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Sequence
 
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+
 
 def rsi(values: Sequence[float], length: int) -> list[float | None]:
     """Wilder's RSI. Returns None for the first `length` bars (insufficient history)."""
@@ -10,6 +13,10 @@ def rsi(values: Sequence[float], length: int) -> list[float | None]:
     n = len(values)
     if n <= length:
         return [None] * n
+    array = np.asarray(values, dtype=np.float64)
+    deltas = np.diff(array)
+    gains = np.maximum(deltas, 0.0)
+    losses = np.maximum(-deltas, 0.0)
 
     def _to_rsi(avg_gain: float, avg_loss: float) -> float:
         if avg_loss == 0.0:
@@ -17,57 +24,65 @@ def rsi(values: Sequence[float], length: int) -> list[float | None]:
         rs = avg_gain / avg_loss
         return 100.0 - (100.0 / (1.0 + rs))
 
-    result: list[float | None] = [None] * length
-
     # Seed: simple average of first `length` up/down moves
-    avg_gain = sum(max(values[i] - values[i - 1], 0.0) for i in range(1, length + 1)) / length
-    avg_loss = sum(max(values[i - 1] - values[i], 0.0) for i in range(1, length + 1)) / length
-    result.append(_to_rsi(avg_gain, avg_loss))
+    avg_gain = float(gains[:length].mean())
+    avg_loss = float(losses[:length].mean())
+    rsi_values = np.empty(n - length, dtype=np.float64)
+    rsi_values[0] = _to_rsi(avg_gain, avg_loss)
 
     # Wilder smoothing for subsequent bars
-    for i in range(length + 1, n):
-        gain = max(values[i] - values[i - 1], 0.0)
-        loss = max(values[i - 1] - values[i], 0.0)
+    for delta_index in range(length, n - 1):
+        gain = float(gains[delta_index])
+        loss = float(losses[delta_index])
         avg_gain = (avg_gain * (length - 1) + gain) / length
         avg_loss = (avg_loss * (length - 1) + loss) / length
-        result.append(_to_rsi(avg_gain, avg_loss))
+        rsi_values[delta_index - length + 1] = _to_rsi(avg_gain, avg_loss)
 
-    return result
+    return [None] * length + rsi_values.tolist()
 
 
 def ema(values: Sequence[float], length: int) -> list[float]:
     if length < 1:
         raise ValueError("length must be >= 1")
-    if not values:
+    n = len(values)
+    if n == 0:
         return []
+    if length == 1:
+        return [float(value) for value in values]
+    array = np.asarray(values, dtype=np.float64)
     alpha = 2.0 / (length + 1)
-    result: list[float] = []
-    current: float | None = None
-    for value in values:
-        current = value if current is None else (value * alpha) + (current * (1.0 - alpha))
-        result.append(current)
-    return result
+    beta = 1.0 - alpha
+    result = np.empty(n, dtype=np.float64)
+    result[0] = array[0]
+    previous = float(array[0])
+    chunk_size = 256
+    for start in range(1, n, chunk_size):
+        chunk = array[start : start + chunk_size]
+        powers = beta ** np.arange(1, len(chunk) + 1, dtype=np.float64)
+        weighted = np.cumsum(chunk / powers)
+        output = powers * (previous + alpha * weighted)
+        result[start : start + len(chunk)] = output
+        previous = float(output[-1])
+    return result.tolist()
 
 
 def rolling_max_exclusive(values: Sequence[float], window: int) -> list[float | None]:
     if window < 1:
         raise ValueError("window must be >= 1")
-    result: list[float | None] = []
-    for index in range(len(values)):
-        if index < window:
-            result.append(None)
-        else:
-            result.append(max(values[index - window : index]))
-    return result
+    n = len(values)
+    if n <= window:
+        return [None] * n
+    array = np.asarray(values, dtype=np.float64)
+    maxima = sliding_window_view(array, window_shape=window)[:-1].max(axis=1)
+    return [None] * window + maxima.tolist()
 
 
 def rolling_min_exclusive(values: Sequence[float], window: int) -> list[float | None]:
     if window < 1:
         raise ValueError("window must be >= 1")
-    result: list[float | None] = []
-    for index in range(len(values)):
-        if index < window:
-            result.append(None)
-        else:
-            result.append(min(values[index - window : index]))
-    return result
+    n = len(values)
+    if n <= window:
+        return [None] * n
+    array = np.asarray(values, dtype=np.float64)
+    minima = sliding_window_view(array, window_shape=window)[:-1].min(axis=1)
+    return [None] * window + minima.tolist()
