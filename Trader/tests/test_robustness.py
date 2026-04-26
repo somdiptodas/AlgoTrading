@@ -731,3 +731,52 @@ def test_evaluate_preview_annualized_sharpe_uses_combined_fold_returns(monkeypat
     assert aggregate_metrics["annualized_sharpe"] == pytest.approx(
         annualized_sharpe_for_backtests(tuple(fold_backtests.values()))
     )
+
+
+def test_aggregate_fold_results_compounds_regime_returns() -> None:
+    runner = EvaluationRunner.__new__(EvaluationRunner)
+    folds = (
+        FoldResult(
+            fold_id="fold_1",
+            train_start_utc="",
+            train_end_utc="",
+            test_start_utc="",
+            test_end_utc="",
+            metrics={
+                "return_pct": 1.0,
+                "annualized_sharpe": 0.0,
+                "information_ratio_vs_buy_and_hold": 0.0,
+                "p_value_vs_random_entry": 1.0,
+                "regime_trend_return_pct": 10.0,
+                "regime_trend_day_count": 1.0,
+            },
+            baseline_metrics={},
+            baseline_deltas={},
+            warnings=tuple(),
+            backtest=_backtest(tuple(), bar_count=2),
+        ),
+        FoldResult(
+            fold_id="fold_2",
+            train_start_utc="",
+            train_end_utc="",
+            test_start_utc="",
+            test_end_utc="",
+            metrics={
+                "return_pct": 1.0,
+                "annualized_sharpe": 0.0,
+                "information_ratio_vs_buy_and_hold": 0.0,
+                "p_value_vs_random_entry": 1.0,
+                "regime_trend_return_pct": -10.0,
+                "regime_trend_day_count": 2.0,
+            },
+            baseline_metrics={},
+            baseline_deltas={},
+            warnings=tuple(),
+            backtest=_backtest(tuple(), bar_count=2),
+        ),
+    )
+
+    aggregate = runner._aggregate_fold_results(folds)
+
+    assert aggregate["regime_trend_return_pct"] == pytest.approx(-1.0)
+    assert aggregate["regime_trend_day_count"] == 3.0

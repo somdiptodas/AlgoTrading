@@ -22,9 +22,11 @@ from trader.evaluation.baselines import (
 from trader.evaluation.data_quality import validate_bars
 from trader.evaluation.metrics import (
     aggregate_metric_dicts,
+    aggregate_regime_conditional_metrics,
     annualized_sharpe_for_backtests,
     calculate_metrics,
     information_ratio_vs_buy_and_hold,
+    regime_conditional_return_metrics,
 )
 from trader.evaluation.promotion import promotion_stage
 from trader.evaluation.robustness import RobustnessResult, assess_robustness
@@ -32,6 +34,7 @@ from trader.evaluation.splits import Fold, build_walk_forward_folds
 from trader.execution.engine import BacktestResult, run_long_only_engine
 from trader.features.pipeline import FeatureCache, feature_cache_context
 from trader.strategies.registry import StrategyRegistry
+from trader.strategies.filters.regime import generate_reporting_regime_labels
 from trader.strategies.spec import StrategySpec
 
 DEFAULT_LOCKED_HOLDOUT_MONTHS = 3
@@ -393,6 +396,7 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
+        metrics.update(self._regime_conditional_metrics(train_bars, test_bars, result))
         metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
         return FoldResult(
             fold_id=fold.fold_id,
@@ -449,6 +453,7 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
+        metrics.update(self._regime_conditional_metrics(train_bars, test_bars, result))
         metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
         random_entry_return_samples: tuple[float, ...] = tuple()
         if include_baselines:
@@ -603,6 +608,7 @@ class EvaluationRunner:
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
+        metrics.update(self._regime_conditional_metrics(train_bars, test_bars, result))
         metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
         metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
         randomized_metrics, random_entry_return_samples = randomized_entry_same_exposure_with_samples(
@@ -670,6 +676,17 @@ class EvaluationRunner:
             "cost_scenario_spread_plus_2bps_delta_pct": spread_return - base_return,
         }
 
+    def _regime_conditional_metrics(
+        self,
+        train_bars: tuple[MarketBar, ...],
+        test_bars: tuple[MarketBar, ...],
+        result: BacktestResult,
+    ) -> dict[str, float]:
+        return regime_conditional_return_metrics(
+            result,
+            generate_reporting_regime_labels(train_bars, test_bars),
+        )
+
     def _evaluate_preview_folds(
         self,
         spec: StrategySpec,
@@ -704,6 +721,7 @@ class EvaluationRunner:
             aggregate_metrics.get("return_pct", 0.0),
             fold_results,
         )
+        aggregate_metrics.update(aggregate_regime_conditional_metrics([fold.metrics for fold in fold_results]))
         return aggregate_metrics
 
     def evaluation_key(

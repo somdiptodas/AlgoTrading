@@ -61,6 +61,14 @@ _PRIMARY_METRIC_ORDER = (
     "delta_session_long_flat_at_close_sharpe_like",
     "delta_randomized_entry_same_exposure_sharpe_like",
     "delta_buy_and_hold_sharpe_like",
+    "regime_trend_return_pct",
+    "regime_trend_day_count",
+    "regime_chop_return_pct",
+    "regime_chop_day_count",
+    "regime_high_vol_return_pct",
+    "regime_high_vol_day_count",
+    "regime_low_vol_return_pct",
+    "regime_low_vol_day_count",
 )
 
 _ROBUSTNESS_ORDER = (
@@ -113,6 +121,14 @@ _METRIC_LABELS = {
     "delta_session_long_flat_at_close_sharpe_like": "Sharpe-like vs session-long flat-at-close",
     "delta_randomized_entry_same_exposure_sharpe_like": "Sharpe-like vs randomized matched exposure",
     "delta_buy_and_hold_sharpe_like": "Sharpe-like vs buy and hold",
+    "regime_trend_return_pct": "Return in trend regime",
+    "regime_trend_day_count": "Trend regime days",
+    "regime_chop_return_pct": "Return in chop regime",
+    "regime_chop_day_count": "Chop regime days",
+    "regime_high_vol_return_pct": "Return in high-vol regime",
+    "regime_high_vol_day_count": "High-vol regime days",
+    "regime_low_vol_return_pct": "Return in low-vol regime",
+    "regime_low_vol_day_count": "Low-vol regime days",
     "fold_consistency_pass": "Fold consistency pass",
     "positive_fold_ratio": "Positive fold ratio",
     "regime_pass": "Regime pass",
@@ -142,6 +158,10 @@ _SIGNED_PERCENT_METRICS = {
     "delta_randomized_entry_same_exposure_return_pct",
     "delta_exposure_adjusted_buy_and_hold_pct",
     "delta_buy_and_hold_return_pct",
+    "regime_trend_return_pct",
+    "regime_chop_return_pct",
+    "regime_high_vol_return_pct",
+    "regime_low_vol_return_pct",
     "neighborhood_gap_pct",
     "neighborhood_median_return_pct",
 }
@@ -428,7 +448,7 @@ def _label_for_metric(name: str) -> str:
 def _format_metric_value(name: str, value: float | bool) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
-    if name == "trade_count":
+    if name == "trade_count" or name.endswith("_day_count"):
         return f"{int(round(value)):,}"
     if name.endswith("_pct"):
         signed = name in _SIGNED_PERCENT_METRICS

@@ -14,9 +14,11 @@ from trader.evaluation.metrics import (
     MINUTE_BARS_PER_YEAR,
     TRADING_DAYS_PER_YEAR,
     aggregate_metric_dicts,
+    aggregate_regime_conditional_metrics,
     annualized_sharpe,
     calculate_metrics,
     information_ratio_vs_buy_and_hold,
+    regime_conditional_return_metrics,
 )
 from trader.evaluation.splits import build_walk_forward_folds
 from trader.execution.engine import BacktestResult
@@ -174,6 +176,70 @@ def test_aggregate_metrics_weights_by_fold_size() -> None:
 
     assert metrics["return_pct"] == 4.0
     assert metrics["sharpe_like"] == 0.4
+
+
+def test_regime_conditional_return_metrics_compound_session_returns() -> None:
+    bars = []
+    for day, closes in enumerate(((100.0, 101.0), (101.0, 100.0))):
+        session_start = datetime(2026, 1, 5 + day, 9, 30, tzinfo=NEW_YORK)
+        for minute, close in enumerate(closes):
+            timestamp = (session_start + timedelta(minutes=minute)).astimezone(timezone.utc)
+            bars.append(
+                MarketBar(
+                    timestamp_ms=int(timestamp.timestamp() * 1000),
+                    timestamp_utc=timestamp.isoformat(),
+                    open=close,
+                    high=close + 0.25,
+                    low=close - 0.25,
+                    close=close,
+                    volume=1_000.0,
+                )
+            )
+    result = BacktestResult(
+        bars=tuple(bars),
+        trades=tuple(),
+        equity_curve=(100_000.0, 101_000.0, 101_000.0, 99_990.0),
+        initial_cash=100_000.0,
+        final_cash=99_990.0,
+    )
+
+    metrics = regime_conditional_return_metrics(
+        result,
+        (tuple(), ("trend", "high_vol"), tuple(), ("chop", "low_vol")),
+    )
+
+    assert metrics["regime_trend_return_pct"] == pytest.approx(1.0)
+    assert metrics["regime_trend_day_count"] == 1.0
+    assert metrics["regime_high_vol_return_pct"] == pytest.approx(1.0)
+    assert metrics["regime_chop_return_pct"] == pytest.approx(-1.0)
+    assert metrics["regime_low_vol_return_pct"] == pytest.approx(-1.0)
+
+
+def test_regime_conditional_return_metrics_require_matching_labels() -> None:
+    result = BacktestResult(
+        bars=_market_bars(2),
+        trades=tuple(),
+        equity_curve=(100_000.0, 100_000.0),
+        initial_cash=100_000.0,
+        final_cash=100_000.0,
+    )
+
+    with pytest.raises(ValueError, match="same length"):
+        regime_conditional_return_metrics(result, (("trend",),))
+
+
+def test_regime_conditional_aggregate_compounds_fold_returns() -> None:
+    metrics = aggregate_regime_conditional_metrics(
+        (
+            {"regime_trend_return_pct": 10.0, "regime_trend_day_count": 1.0},
+            {"regime_trend_return_pct": -10.0, "regime_trend_day_count": 2.0},
+        )
+    )
+
+    assert metrics["regime_trend_return_pct"] == pytest.approx(-1.0)
+    assert metrics["regime_trend_day_count"] == 3.0
+    assert metrics["regime_chop_return_pct"] == 0.0
+    assert metrics["regime_chop_day_count"] == 0.0
 
 
 def test_strategy_hash_is_stable() -> None:

@@ -429,6 +429,22 @@ def test_report_renders_exposure_adjusted_buy_hold_delta() -> None:
     assert "Return vs exposure-adjusted buy and hold" in report
 
 
+def test_report_renders_regime_conditional_returns() -> None:
+    base = _sample_result()
+    result = replace(
+        base,
+        aggregate_metrics={
+            **base.aggregate_metrics,
+            "regime_trend_return_pct": 1.25,
+            "regime_trend_day_count": 2.0,
+        },
+    )
+    report = render_experiment_report(result)
+
+    assert "Return in trend regime: +1.25%" in report
+    assert "Trend regime days: 2" in report
+
+
 def test_top_experiments_ranks_from_scalar_columns_before_deserializing_winners(
     tmp_path: Path,
     monkeypatch,

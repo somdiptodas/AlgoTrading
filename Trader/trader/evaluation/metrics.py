@@ -10,6 +10,7 @@ from trader.execution.fills import Trade
 TRADING_DAYS_PER_YEAR = 252
 REGULAR_SESSION_BARS_PER_DAY = 390
 MINUTE_BARS_PER_YEAR = TRADING_DAYS_PER_YEAR * REGULAR_SESSION_BARS_PER_DAY
+REGIME_RETURN_BUCKETS = ("trend", "chop", "high_vol", "low_vol")
 
 
 def calculate_metrics(result: BacktestResult) -> dict[str, float]:
@@ -56,6 +57,47 @@ def aggregate_metric_dicts(
         key: sum(metric[key] * weight for metric, weight in zip(metrics, weights)) / total_weight
         for key in keys
     }
+
+
+def regime_conditional_return_metrics(
+    result: BacktestResult,
+    labels: Sequence[Sequence[str]],
+) -> dict[str, float]:
+    if len(labels) != len(result.bars):
+        raise ValueError("regime labels must have the same length as result bars")
+
+    returns_by_regime: dict[str, list[float]] = {regime: [] for regime in REGIME_RETURN_BUCKETS}
+    previous_equity = result.initial_cash
+    for start, end in _session_ranges(result):
+        if end <= start or end > len(result.equity_curve):
+            continue
+        session_equity = result.equity_curve[end - 1]
+        session_return = _safe_return(session_equity, previous_equity)
+        for regime in labels[end - 1]:
+            if regime in returns_by_regime:
+                returns_by_regime[regime].append(session_return)
+        previous_equity = session_equity
+
+    metrics: dict[str, float] = {}
+    for regime, returns in returns_by_regime.items():
+        metrics[f"regime_{regime}_return_pct"] = _compound_returns(returns) * 100.0
+        metrics[f"regime_{regime}_day_count"] = float(len(returns))
+    return metrics
+
+
+def aggregate_regime_conditional_metrics(metrics: Sequence[dict[str, float]]) -> dict[str, float]:
+    output: dict[str, float] = {}
+    for regime in REGIME_RETURN_BUCKETS:
+        fold_returns = [
+            metric[f"regime_{regime}_return_pct"] / 100.0
+            for metric in metrics
+            if metric.get(f"regime_{regime}_day_count", 0.0) > 0.0
+        ]
+        output[f"regime_{regime}_return_pct"] = _compound_returns(fold_returns) * 100.0
+        output[f"regime_{regime}_day_count"] = sum(
+            metric.get(f"regime_{regime}_day_count", 0.0) for metric in metrics
+        )
+    return output
 
 
 def max_drawdown_pct(equity_curve: Sequence[float]) -> float:
@@ -169,6 +211,8 @@ def _daily_return_diffs_vs_buy_and_hold(result: BacktestResult) -> list[float]:
 
 
 def _session_ranges(result: BacktestResult) -> tuple[tuple[int, int], ...]:
+    if not result.bars:
+        return tuple()
     ranges: list[tuple[int, int]] = []
     start = 0
     for index in range(1, len(result.bars)):
@@ -183,3 +227,10 @@ def _safe_return(current: float, previous: float) -> float:
     if math.isclose(previous, 0.0):
         return 0.0
     return (current / previous) - 1.0
+
+
+def _compound_returns(returns: Sequence[float]) -> float:
+    compounded = 1.0
+    for value in returns:
+        compounded *= 1.0 + value
+    return compounded - 1.0

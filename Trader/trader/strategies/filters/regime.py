@@ -163,6 +163,37 @@ def generate_day_type_mask(
     return output
 
 
+def generate_reporting_regime_labels(
+    history_bars: Sequence[MarketBar],
+    test_bars: Sequence[MarketBar],
+    *,
+    volatility_lookback_bars: int = 20,
+    volatility_percentile_window: int = 120,
+) -> list[tuple[str, ...]]:
+    bars = tuple(history_bars) + tuple(test_bars)
+    history_count = len(history_bars)
+    stats = _session_progress_stats(bars)
+    realized_volatility = _intraday_realized_volatility_bps(bars, volatility_lookback_bars)
+    labels: list[tuple[str, ...]] = []
+    for index in range(history_count, len(bars)):
+        _, move_bps, range_bps, efficiency = stats[index]
+        regime_labels: list[str] = []
+        if move_bps >= 50.0 and efficiency >= 0.60:
+            regime_labels.append("trend")
+        if range_bps >= 50.0 and efficiency <= 0.35:
+            regime_labels.append("chop")
+        sample = [
+            value
+            for value in realized_volatility[max(0, index - volatility_percentile_window) : index]
+            if value is not None
+        ]
+        percentile = _percentile_rank(realized_volatility[index], sample)
+        if percentile is not None:
+            regime_labels.append("high_vol" if percentile >= 50.0 else "low_vol")
+        labels.append(tuple(regime_labels))
+    return labels
+
+
 def normalize_vwap_distance_params(params: dict[str, object]) -> dict[str, float | str]:
     merged = {"side": "below", "min_deviation_bps": 0.0, "max_deviation_bps": 100_000.0, **params}
     side = str(merged["side"])

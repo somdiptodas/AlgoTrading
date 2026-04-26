@@ -9,6 +9,7 @@ import pytest
 from trader.data.models import MarketBar
 from trader.execution.engine import run_long_only_engine
 from trader.research.planner import DeterministicPlanner
+from trader.strategies.filters.regime import generate_reporting_regime_labels
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import FilterSpec, SignalSpec, StrategySpec
 
@@ -144,6 +145,32 @@ def test_day_type_filter_does_not_peek_forward() -> None:
     spec = _vwap_spec((FilterSpec("day_type", {"mode": "trend", "min_bars": 2, "trend_bps": 0.0}),))
 
     assert REGISTRY.generate_regime(spec, tuple(), test)[1] == REGISTRY.generate_regime(spec, tuple(), altered)[1]
+
+
+def test_reporting_regime_labels_do_not_peek_forward() -> None:
+    history = tuple(_bar(0, index, 100.0 + index) for index in range(4))
+    test = tuple(_bar(0, 4 + index, 104.0 + index) for index in range(4))
+    altered = (
+        test[0],
+        test[1],
+        replace(test[2], close=50.0, low=49.0),
+        replace(test[3], close=150.0, high=151.0),
+    )
+
+    labels = generate_reporting_regime_labels(
+        history,
+        test,
+        volatility_lookback_bars=2,
+        volatility_percentile_window=3,
+    )
+    altered_labels = generate_reporting_regime_labels(
+        history,
+        altered,
+        volatility_lookback_bars=2,
+        volatility_percentile_window=3,
+    )
+
+    assert labels[:2] == altered_labels[:2]
 
 
 def test_planner_emits_optional_regime_filter_variants() -> None:
