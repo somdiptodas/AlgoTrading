@@ -221,6 +221,41 @@ def test_artifact_trades_json_persists_entry_and_exit_votes(tmp_path: Path) -> N
     assert trade_payload["exit_votes"] == [{"name": "exit_a", "passed": True, "detail": "ok"}]
 
 
+def test_compact_ledger_summaries_omit_decision_traces(tmp_path: Path) -> None:
+    result = _sample_result()
+    entry_rule = RuleDecision(True, "entry all passed", (SignalVote("entry_a", True, "ok"),))
+    exit_rule = RuleDecision(True, "exit any passed", (SignalVote("exit_a", True, "ok"),))
+    fold = result.fold_results[0]
+    trade = replace(
+        fold.backtest.trades[0],
+        entry_reason=entry_rule.reason,
+        exit_reason=exit_rule.reason,
+        entry_rule=entry_rule,
+        exit_rule=exit_rule,
+    )
+    updated_result = replace(
+        result,
+        fold_results=(replace(fold, backtest=replace(fold.backtest, trades=(trade,))),),
+    )
+    ledger = LedgerStore(tmp_path / "ledger.db")
+    ledger.initialize()
+
+    entry = ledger.record_result(updated_result, artifact_paths={}, generator_kind="grid")
+
+    with sqlite3.connect(ledger.database_path) as connection:
+        raw_entry_json = connection.execute(
+            "SELECT entry_json FROM ledger_entries WHERE experiment_id = ?",
+            (entry.experiment_id,),
+        ).fetchone()[0]
+
+    assert "entry_votes" not in raw_entry_json
+    assert "exit_votes" not in raw_entry_json
+    assert "entry_rule" not in raw_entry_json
+    assert "exit_rule" not in raw_entry_json
+    fold_payload = json.loads(raw_entry_json)["result"]["fold_results"][0]
+    assert fold_payload["backtest_summary"]["trade_count"] == 1
+
+
 def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:
     result = _sample_result()
     ledger = LedgerStore(tmp_path / "ledger.db")
