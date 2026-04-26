@@ -52,7 +52,7 @@ def _sample_result() -> ExperimentResult:
     backtest = BacktestResult(
         bars=tuple(bars),
         trades=(
-            Trade("a", "b", 100.0, 101.0, 10, 2, 10.0, 1.0, "signal_flip"),
+            Trade("a", "b", 100.0, 101.0, 10, 2, 10.0, 1.0, "signal_flip", cost_cash=1.25),
         ),
         equity_curve=(100_000.0, 100_010.0, 100_015.0),
         initial_cash=100_000.0,
@@ -112,6 +112,35 @@ def _sample_result() -> ExperimentResult:
         robustness_checks={"fold_consistency_pass": True, "neighborhood_pass": True},
         promotion_stage="research_frontier",
     )
+
+
+def _sample_result_with_bar_count(count: int) -> ExperimentResult:
+    result = _sample_result()
+    start = datetime(2026, 1, 5, 9, 30, tzinfo=NEW_YORK)
+    bars = []
+    for index in range(count):
+        timestamp = (start + timedelta(minutes=index)).astimezone(timezone.utc)
+        price = 100.0 + index
+        bars.append(
+            MarketBar(
+                timestamp_ms=int(timestamp.timestamp() * 1000),
+                timestamp_utc=timestamp.isoformat(),
+                open=price,
+                high=price + 0.25,
+                low=price - 0.25,
+                close=price,
+                volume=1_000.0,
+            )
+        )
+    fold = result.fold_results[0]
+    backtest = replace(
+        fold.backtest,
+        bars=tuple(bars),
+        equity_curve=tuple(100_000.0 + index for index in range(count)),
+        final_cash=100_000.0 + count - 1,
+    )
+    updated_fold = replace(fold, backtest=backtest)
+    return replace(result, fold_results=(updated_fold,))
 
 
 def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:
@@ -242,7 +271,7 @@ def test_legacy_suppression_log_gets_audit_type_column(tmp_path: Path) -> None:
     assert audit_type == "previewed"
 
 
-def test_ledger_entry_json_is_compact_and_artifacts_keep_full_details(tmp_path: Path) -> None:
+def test_ledger_entry_json_is_compact_and_artifacts_store_sampled_equity(tmp_path: Path) -> None:
     result = _sample_result()
     ledger = LedgerStore(tmp_path / "ledger.db")
     ledger.initialize()
@@ -273,7 +302,8 @@ def test_ledger_entry_json_is_compact_and_artifacts_keep_full_details(tmp_path: 
     artifact_result = json.loads(Path(artifact_paths["result"]).read_text(encoding="utf-8"))
     assert len(artifact_result["fold_results"][0]["backtest"]["bars"]) == 3
     assert len(artifact_result["fold_results"][0]["backtest"]["trades"]) == 1
-    assert len(artifact_result["fold_results"][0]["backtest"]["equity_curve"]) == 3
+    assert len(artifact_result["fold_results"][0]["backtest"]["equity_curve"]) == 2
+    assert artifact_result["fold_results"][0]["backtest"]["equity_sampling_interval_minutes"] == 30
 
     fetched = ledger.get_by_evaluation_key(entry.evaluation_key)
     assert fetched is not None
@@ -306,6 +336,34 @@ def test_legacy_full_ledger_entry_json_still_reads() -> None:
     assert len(entry.fold_results[0].backtest.bars) == 3
     assert len(entry.fold_results[0].backtest.trades) == 1
     assert entry.fold_results[0].backtest.equity_curve == (100_000.0, 100_010.0, 100_015.0)
+
+
+def test_artifacts_downsample_stored_equity_to_30_minute_points(tmp_path: Path) -> None:
+    result = _sample_result_with_bar_count(65)
+    artifacts = ArtifactStore(tmp_path / "artifacts", tmp_path / "reports")
+
+    artifact_paths = artifacts.write_experiment(result)
+
+    equity_payload = json.loads(Path(artifact_paths["equity"]).read_text(encoding="utf-8"))
+    fold_equity = equity_payload["folds"][0]
+    assert equity_payload["sampling_interval_minutes"] == 30
+    assert fold_equity["sampling_interval_minutes"] == 30
+    assert fold_equity["source_points"] == 65
+    assert fold_equity["equity_curve"] == [100_000.0, 100_030.0, 100_060.0, 100_064.0]
+    assert fold_equity["timestamps_utc"] == [
+        result.fold_results[0].backtest.bars[index].timestamp_utc
+        for index in (0, 30, 60, 64)
+    ]
+
+    result_payload = json.loads(Path(artifact_paths["result"]).read_text(encoding="utf-8"))
+    backtest_payload = result_payload["fold_results"][0]["backtest"]
+    assert len(backtest_payload["bars"]) == 65
+    assert backtest_payload["equity_curve"] == fold_equity["equity_curve"]
+    assert backtest_payload["equity_timestamps_utc"] == fold_equity["timestamps_utc"]
+    assert backtest_payload["equity_source_points"] == 65
+
+    trades_payload = json.loads(Path(artifact_paths["trades"]).read_text(encoding="utf-8"))
+    assert trades_payload["folds"][0]["trades"][0]["cost_cash"] == 1.25
 
 
 def test_holdout_result_serializes_separately_from_research_folds() -> None:

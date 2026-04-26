@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from trader.evaluation.runner import ExperimentResult
-from trader.ledger.entry import experiment_result_to_payload, json_dumps
+from trader.evaluation.runner import FoldResult
+from trader.ledger.entry import equity_sample_indices, experiment_result_to_payload, json_dumps, trade_to_payload
+
+_EQUITY_SAMPLE_INTERVAL_MINUTES = 30
 
 
 class ArtifactStore:
@@ -31,7 +33,13 @@ class ArtifactStore:
         report_path = self.reports_dir / f"{result.experiment_id}.md"
 
         spec_path.write_text(result.spec.canonical_json(), encoding="utf-8")
-        result_path.write_text(json_dumps(experiment_result_to_payload(result), pretty=True), encoding="utf-8")
+        result_path.write_text(
+            json_dumps(
+                experiment_result_to_payload(result, equity_interval_minutes=_EQUITY_SAMPLE_INTERVAL_MINUTES),
+                pretty=True,
+            ),
+            encoding="utf-8",
+        )
         trades_path.write_text(json_dumps(self._trades_payload(result), pretty=True), encoding="utf-8")
         equity_path.write_text(json_dumps(self._equity_payload(result), pretty=True), encoding="utf-8")
         report_path.write_text(
@@ -85,20 +93,7 @@ class ArtifactStore:
             "folds": [
                 {
                     "fold_id": fold.fold_id,
-                    "trades": [
-                        {
-                            "entry_timestamp_utc": trade.entry_timestamp_utc,
-                            "exit_timestamp_utc": trade.exit_timestamp_utc,
-                            "entry_price": trade.entry_price,
-                            "exit_price": trade.exit_price,
-                            "shares": trade.shares,
-                            "bars_held": trade.bars_held,
-                            "pnl_cash": trade.pnl_cash,
-                            "pnl_pct": trade.pnl_pct,
-                            "exit_reason": trade.exit_reason,
-                        }
-                        for trade in fold.backtest.trades
-                    ],
+                    "trades": [trade_to_payload(trade) for trade in fold.backtest.trades],
                 }
                 for fold in result.fold_results
             ],
@@ -107,14 +102,21 @@ class ArtifactStore:
     def _equity_payload(self, result: ExperimentResult) -> dict[str, object]:
         return {
             "experiment_id": result.experiment_id,
-            "folds": [
-                {
-                    "fold_id": fold.fold_id,
-                    "timestamps_utc": [bar.timestamp_utc for bar in fold.backtest.bars],
-                    "equity_curve": list(fold.backtest.equity_curve),
-                }
-                for fold in result.fold_results
-            ],
+            "sampling_interval_minutes": _EQUITY_SAMPLE_INTERVAL_MINUTES,
+            "folds": [self._sampled_equity_payload(fold) for fold in result.fold_results],
+        }
+
+    def _sampled_equity_payload(self, fold: FoldResult) -> dict[str, object]:
+        bars = fold.backtest.bars
+        equity_curve = fold.backtest.equity_curve
+        source_points = min(len(bars), len(equity_curve))
+        sampled_indices = equity_sample_indices(bars, equity_curve, _EQUITY_SAMPLE_INTERVAL_MINUTES)
+        return {
+            "fold_id": fold.fold_id,
+            "sampling_interval_minutes": _EQUITY_SAMPLE_INTERVAL_MINUTES,
+            "source_points": source_points,
+            "timestamps_utc": [bars[index].timestamp_utc for index in sampled_indices],
+            "equity_curve": [equity_curve[index] for index in sampled_indices],
         }
 
     def _default_report(

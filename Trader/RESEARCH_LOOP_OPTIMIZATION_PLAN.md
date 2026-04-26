@@ -318,7 +318,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: Stage-B candidate evaluation now runs through a 4-8 worker `ProcessPoolExecutor`; each worker opens its own `EvaluationRunner` against the same database and returns only the `ExperimentResult` plus phase timings, while critique, artifact writes, ledger writes, and suppression audit logging remain single-writer in the parent process.
   - Verification: focused loop/queue/robustness/ledger tests passed (`.venv/bin/pytest -q tests/test_loop_cmd.py tests/test_research_queue.py tests/test_robustness.py tests/test_ledger.py`); throwaway real ProcessPool smoke passed against a temporary SQLite DB; full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
-- [ ] **Down-sample stored equity to 30-minute granularity** (S10). Per-minute reconstructable from `trades.json`.
+- [x] **Down-sample stored equity to 30-minute granularity** (S10). Per-minute reconstructable from `trades.json`.
+  - Completed: 2026-04-25
+  - Implementation: Artifact `result.json` and `equity.json` now store sampled equity points at the first bar, each 30-minute regular-session offset, and the final bar, with sampling metadata/source counts; default serializers remain full-resolution unless artifacts opt into sampling, and `trades.json` now uses the central trade serializer so cost fields needed for reconstruction are retained.
+  - Verification: focused ledger/artifact tests passed (`.venv/bin/pytest -q tests/test_ledger.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found and then re-checked the `trades.json` reconstruction blocker with no blockers remaining.
 
 ### P2 — better selection signal & reuse across runs
 

@@ -4,5 +4,6 @@
 - [ ] Add an explicit negated filter mode so `ema_cross AND NOT day_type=trend` can be represented exactly. The first composite planner bucket uses the existing `day_type=mean_reversion` filter as the smallest safe approximation.
 - [ ] Benchmark the NumPy indicator path on real fold sizes and consider a dedicated EMA/RSI recurrence accelerator if those recursive primitives remain a hotspot after rolling-window and regime-helper vectorization.
 - [ ] Benchmark process-pool Stage B with real batch sizes to confirm preview/result pickling overhead does not erase the expected wall-clock speedup.
+- [ ] Decide whether `trades.json` should become a standalone reconstruction artifact; today exact per-minute equity reconstruction still needs bars/config from `result.json` in addition to the trade cost fields now stored in `trades.json`.
 
 - [ ] Add a runner-level regression test proving aggregate `information_ratio_vs_buy_and_hold` is recomputed from pooled daily active returns across fold backtests, not averaged from fold-level IR values.

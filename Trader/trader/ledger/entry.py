@@ -96,14 +96,24 @@ def trade_from_payload(payload: dict[str, Any]) -> Trade:
     )
 
 
-def backtest_to_payload(backtest: BacktestResult) -> dict[str, object]:
-    return {
+def backtest_to_payload(
+    backtest: BacktestResult,
+    *,
+    equity_interval_minutes: int | None = None,
+) -> dict[str, object]:
+    equity_indices = equity_sample_indices(backtest.bars, backtest.equity_curve, equity_interval_minutes)
+    payload = {
         "bars": [market_bar_to_payload(bar) for bar in backtest.bars],
         "trades": [trade_to_payload(trade) for trade in backtest.trades],
-        "equity_curve": list(backtest.equity_curve),
+        "equity_curve": [backtest.equity_curve[index] for index in equity_indices],
         "initial_cash": backtest.initial_cash,
         "final_cash": backtest.final_cash,
     }
+    if equity_interval_minutes is not None:
+        payload["equity_timestamps_utc"] = [backtest.bars[index].timestamp_utc for index in equity_indices]
+        payload["equity_sampling_interval_minutes"] = equity_interval_minutes
+        payload["equity_source_points"] = min(len(backtest.bars), len(backtest.equity_curve))
+    return payload
 
 
 def backtest_from_payload(payload: dict[str, Any]) -> BacktestResult:
@@ -129,7 +139,11 @@ def _robustness_dict(payload: dict[str, Any]) -> dict[str, float | bool]:
     return normalized
 
 
-def fold_result_to_payload(fold_result: FoldResult) -> dict[str, object]:
+def fold_result_to_payload(
+    fold_result: FoldResult,
+    *,
+    equity_interval_minutes: int | None = None,
+) -> dict[str, object]:
     return {
         "fold_id": fold_result.fold_id,
         "train_start_utc": fold_result.train_start_utc,
@@ -142,7 +156,7 @@ def fold_result_to_payload(fold_result: FoldResult) -> dict[str, object]:
         },
         "baseline_deltas": dict(fold_result.baseline_deltas),
         "warnings": list(fold_result.warnings),
-        "backtest": backtest_to_payload(fold_result.backtest),
+        "backtest": backtest_to_payload(fold_result.backtest, equity_interval_minutes=equity_interval_minutes),
     }
 
 
@@ -198,7 +212,11 @@ def fold_result_from_payload(payload: dict[str, Any]) -> FoldResult:
     )
 
 
-def experiment_result_to_payload(result: ExperimentResult) -> dict[str, object]:
+def experiment_result_to_payload(
+    result: ExperimentResult,
+    *,
+    equity_interval_minutes: int | None = None,
+) -> dict[str, object]:
     payload = {
         "experiment_id": result.experiment_id,
         "status": result.status,
@@ -208,13 +226,41 @@ def experiment_result_to_payload(result: ExperimentResult) -> dict[str, object]:
         "split_plan_id": result.split_plan_id,
         "cost_model_id": result.cost_model_id,
         "aggregate_metrics": dict(result.aggregate_metrics),
-        "fold_results": [fold_result_to_payload(item) for item in result.fold_results],
+        "fold_results": [
+            fold_result_to_payload(item, equity_interval_minutes=equity_interval_minutes)
+            for item in result.fold_results
+        ],
         "robustness_checks": dict(result.robustness_checks),
         "promotion_stage": result.promotion_stage,
     }
     if result.holdout_result is not None:
-        payload["holdout_result"] = fold_result_to_payload(result.holdout_result)
+        payload["holdout_result"] = fold_result_to_payload(
+            result.holdout_result,
+            equity_interval_minutes=equity_interval_minutes,
+        )
     return payload
+
+
+def equity_sample_indices(
+    bars: tuple[MarketBar, ...],
+    equity_curve: tuple[float, ...],
+    interval_minutes: int | None,
+) -> tuple[int, ...]:
+    source_points = min(len(bars), len(equity_curve))
+    if source_points <= 0:
+        return tuple()
+    if interval_minutes is None:
+        return tuple(range(source_points))
+    if interval_minutes < 1:
+        raise ValueError("equity_interval_minutes must be >= 1")
+    keep = {0, source_points - 1}
+    for index, bar in enumerate(bars[:source_points]):
+        local = bar.dt_local
+        session_start = local.replace(hour=9, minute=30, second=0, microsecond=0)
+        offset_minutes = int((local - session_start).total_seconds() // 60)
+        if offset_minutes >= 0 and offset_minutes % interval_minutes == 0:
+            keep.add(index)
+    return tuple(sorted(keep))
 
 
 def experiment_result_to_ledger_payload(result: ExperimentResult) -> dict[str, object]:
