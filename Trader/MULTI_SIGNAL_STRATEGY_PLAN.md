@@ -345,7 +345,7 @@ the checklist in each commit.
       for at least one winning and one losing strategy.
 - [x] Run 10 loop iterations with `multi_signal` only.
 - [ ] Report:
-  - [ ] best Sharpe-like score.
+  - [x] best Sharpe-like score.
   - [ ] best return.
   - [ ] trade count.
   - [ ] duplicate/reused candidate rate.
