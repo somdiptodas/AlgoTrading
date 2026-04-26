@@ -336,7 +336,7 @@ the checklist in each commit.
 
 ### Phase 8: Evaluation And Rollout
 
-- [ ] Run focused tests for strategy validation, decisions, engine behavior,
+- [x] Run focused tests for strategy validation, decisions, engine behavior,
       artifacts, and planner generation.
 - [ ] Run the full test suite.
 - [ ] Reset stale local research artifacts before measuring new loop behavior.
