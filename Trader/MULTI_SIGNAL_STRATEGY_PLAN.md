@@ -339,7 +339,7 @@ the checklist in each commit.
 - [x] Run focused tests for strategy validation, decisions, engine behavior,
       artifacts, and planner generation.
 - [x] Run the full test suite.
-- [ ] Reset stale local research artifacts before measuring new loop behavior.
+- [x] Reset stale local research artifacts before measuring new loop behavior.
 - [ ] Run a small smoke batch of multi-signal-only experiments.
 - [ ] Inspect generated run dashboard, one run report, and trade visualizations
       for at least one winning and one losing strategy.
