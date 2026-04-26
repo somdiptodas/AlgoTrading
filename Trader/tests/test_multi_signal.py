@@ -268,6 +268,36 @@ def test_multi_signal_canonicalizes_child_order_for_stable_hashing() -> None:
     assert validated_base.spec_hash() == validated_reordered.spec_hash()
 
 
+def test_multi_signal_required_history_uses_max_entry_and_exit_child_history() -> None:
+    params = {
+        "entry_rule": {
+            "combiner": "all",
+            "signals": [
+                {"name": "rsi_below", "params": {"length": 4, "threshold": 30.0}},
+                {"name": "ema_trend_up", "params": {"fast": 2, "slow": 3}},
+                {"name": "vwap_distance", "params": {"side": "below"}},
+            ],
+        },
+        "exit_rule": {
+            "combiner": "any",
+            "signals": [
+                {"name": "intraday_volatility", "params": {"lookback": 2, "percentile_window": 5}},
+                {"name": "rsi_above", "params": {"length": 2, "threshold": 70.0}},
+                {"name": "vwap_reclaimed", "params": {"min_bps": 0.0}},
+            ],
+        },
+    }
+
+    spec = REGISTRY.validate_spec(
+        StrategySpec(
+            name="multi_signal_history",
+            signal=SignalSpec("multi_signal", params),
+        )
+    )
+
+    assert REGISTRY.required_history(spec) == 7
+
+
 def test_registry_generate_decisions_wraps_legacy_regimes() -> None:
     bars = tuple(_bar(index, 100.0 + index) for index in range(6))
     decisions = REGISTRY.generate_decisions(

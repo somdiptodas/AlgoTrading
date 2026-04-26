@@ -19,7 +19,12 @@ def normalize_params(params: dict[str, object]) -> dict[str, object]:
 
 
 def required_history(params: dict[str, object]) -> int:
-    return 0
+    histories = [
+        PREDICATES.required_history(str(signal["name"]), signal["params"])
+        for rule in (params["entry_rule"], params["exit_rule"])
+        for signal in _signals(rule)
+    ]
+    return max(histories, default=0)
 
 
 def generate_decisions(
