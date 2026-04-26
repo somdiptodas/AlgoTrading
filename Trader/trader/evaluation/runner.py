@@ -657,7 +657,7 @@ class EvaluationRunner:
         metrics = calculate_metrics(result)
         metrics.update(self._regime_conditional_metrics(train_bars, test_bars, result))
         metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
-        metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
+        metrics.update(self._cost_scenario_metrics(spec, test_bars, signal_state, sizing_fraction, metrics))
         randomized_metrics, random_entry_return_samples = randomized_entry_same_exposure_with_samples(
             test_bars,
             spec.exec_config,
