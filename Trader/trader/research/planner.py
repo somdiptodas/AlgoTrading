@@ -278,6 +278,8 @@ class DeterministicPlanner:
         allowed_signal_families: Sequence[str] | None = None,
         history_entries: Sequence[LedgerEntry] = (),
         optuna_dir: Path | None = None,
+        restart_seed: str | None = None,
+        restart_index: int = 0,
     ) -> tuple[PlannedSpec, ...]:
         allowed = tuple(allowed_signal_families or ("ema_cross", "breakout"))
         optuna_buckets = self._optuna_candidate_buckets(
@@ -297,7 +299,16 @@ class DeterministicPlanner:
         grid_buckets: list[Iterable[PlannedSpec]] = []
         for signal_name in allowed:
             if signal_name == "multi_signal":
-                grid_buckets.append(self._iter_multi_signal_candidates())
+                grid_buckets.append(
+                    self._iter_multi_signal_candidates(
+                        restart_offset=_restart_offset(
+                            restart_seed,
+                            restart_index,
+                            "multi_signal_grid",
+                            _multi_signal_candidate_count(),
+                        )
+                    )
+                )
             else:
                 grid_buckets.append(self._iter_grid_candidates(signal_name))
         frontier_buckets = {signal_name: [] for signal_name in allowed}
@@ -358,32 +369,36 @@ class DeterministicPlanner:
                     generator_kind="grid",
                 )
 
-    def _iter_multi_signal_candidates(self) -> Iterable[PlannedSpec]:
+    def _iter_multi_signal_candidates(self, *, restart_offset: int = 0) -> Iterable[PlannedSpec]:
         grammar = multi_signal_search_grammar()
-        for entry_shape in grammar.entry_shapes:
-            for exit_shape in grammar.exit_shapes:
-                for variant_index in range(_MULTI_SIGNAL_VARIANTS_PER_SHAPE):
-                    sizing, exec_config, filters = _parameter_combination_at(variant_index)
-                    spec = self.registry.validate_spec(
-                        StrategySpec(
-                            name="multi_signal_grid",
-                            signal=SignalSpec(
-                                "multi_signal",
-                                {
-                                    "entry_rule": _multi_signal_rule_payload(entry_shape, variant_index),
-                                    "exit_rule": _multi_signal_rule_payload(exit_shape, variant_index),
-                                },
-                            ),
-                            sizing=sizing,
-                            filters=filters,
-                            exec_config=exec_config,
-                            tags=(grammar.version,),
-                        )
-                    )
-                    yield PlannedSpec(
-                        spec=self._rename(spec),
-                        generator_kind="multi_signal_grid",
-                    )
+        exit_shape_count = len(grammar.exit_shapes)
+        for offset in range(_multi_signal_candidate_count()):
+            candidate_index = (restart_offset + offset) % _multi_signal_candidate_count()
+            variant_index = candidate_index % _MULTI_SIGNAL_VARIANTS_PER_SHAPE
+            shape_index = candidate_index // _MULTI_SIGNAL_VARIANTS_PER_SHAPE
+            entry_shape = grammar.entry_shapes[shape_index // exit_shape_count]
+            exit_shape = grammar.exit_shapes[shape_index % exit_shape_count]
+            sizing, exec_config, filters = _parameter_combination_at(variant_index)
+            spec = self.registry.validate_spec(
+                StrategySpec(
+                    name="multi_signal_grid",
+                    signal=SignalSpec(
+                        "multi_signal",
+                        {
+                            "entry_rule": _multi_signal_rule_payload(entry_shape, variant_index),
+                            "exit_rule": _multi_signal_rule_payload(exit_shape, variant_index),
+                        },
+                    ),
+                    sizing=sizing,
+                    filters=filters,
+                    exec_config=exec_config,
+                    tags=(grammar.version,),
+                )
+            )
+            yield PlannedSpec(
+                spec=self._rename(spec),
+                generator_kind="multi_signal_grid",
+            )
 
     def _rename(self, spec: StrategySpec) -> StrategySpec:
         return StrategySpec.from_payload(
@@ -517,6 +532,17 @@ def _parameter_combination_at(index: int) -> tuple[SizingSpec, ExecConfig, tuple
         _EXECUTION_GRID[index % len(_EXECUTION_GRID)],
         _FILTER_GRID[index % len(_FILTER_GRID)],
     )
+
+
+def _multi_signal_candidate_count() -> int:
+    grammar = multi_signal_search_grammar()
+    return len(grammar.entry_shapes) * len(grammar.exit_shapes) * _MULTI_SIGNAL_VARIANTS_PER_SHAPE
+
+
+def _restart_offset(seed: str | None, restart_index: int, label: str, modulo: int) -> int:
+    if seed is None or restart_index <= 0 or modulo <= 1:
+        return 0
+    return 1 + (_stable_seed(f"{seed}:{restart_index}:{label}") % (modulo - 1))
 
 
 def _multi_signal_rule_payload(shape: MultiSignalRuleShape, variant_index: int) -> dict[str, object]:

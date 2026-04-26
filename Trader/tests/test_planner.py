@@ -97,6 +97,26 @@ def test_planner_generates_valid_multi_signal_candidates_with_minimum_rule_sizes
         assert len(validated.signal.params["exit_rule"]["signals"]) >= 3  # type: ignore[index]
 
 
+def test_planner_restart_changes_multi_signal_starting_region() -> None:
+    planner = DeterministicPlanner(REGISTRY)
+
+    first = planner.plan(
+        batch_size=4,
+        allowed_signal_families=("multi_signal",),
+        restart_seed="loop_run",
+        restart_index=0,
+    )
+    restarted = planner.plan(
+        batch_size=4,
+        allowed_signal_families=("multi_signal",),
+        restart_seed="loop_run",
+        restart_index=1,
+    )
+
+    assert first[0].spec.spec_hash() != restarted[0].spec.spec_hash()
+    assert all(REGISTRY.validate_spec(item.spec) for item in restarted)
+
+
 def test_planner_reserves_grid_slot_for_each_enabled_family_before_truncation() -> None:
     planner = DeterministicPlanner(REGISTRY)
 

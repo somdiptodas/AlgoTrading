@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES
-from trader.cli.loop_cmd import _active_data_snapshot_id, _add_timing, _current_snapshot_entries, _max_preview_count, _new_timings, _planned_spec_count, _suppression_audit_types, _timing_payload
+from trader.cli.loop_cmd import _active_data_snapshot_id, _add_timing, _current_snapshot_entries, _max_preview_count, _new_timings, _planned_spec_count, _should_restart_planner, _suppression_audit_types, _timing_payload
 from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _load_or_seed_critic_memory, _loop_experiment_summary, _mark_stage_a_passed, _prescreen_stage_a_candidates, _stage_b_worker_count, _write_loop_outputs, build_parser
 from trader.config import Settings
 from trader.evaluation.runner import ExperimentResult
@@ -21,6 +21,13 @@ def test_planned_spec_count_uses_named_overplan_factor_and_floor() -> None:
 def test_max_preview_count_uses_named_preview_factor() -> None:
     assert _max_preview_count(batch_size=6, preview_factor=DEFAULT_PREVIEW_FACTOR) == 24
     assert _max_preview_count(batch_size=6, preview_factor=0) == 6
+
+
+def test_should_restart_planner_when_candidate_reuse_is_high() -> None:
+    assert _should_restart_planner(SimpleNamespace(previewed_count=0, duplicate_count=1), planned_count=64)
+    assert _should_restart_planner(SimpleNamespace(previewed_count=8, duplicate_count=48), planned_count=64)
+    assert not _should_restart_planner(SimpleNamespace(previewed_count=8, duplicate_count=12), planned_count=64)
+    assert not _should_restart_planner(SimpleNamespace(previewed_count=0, duplicate_count=1), planned_count=0)
 
 
 def test_suppression_audit_types_separate_evaluated_from_discarded() -> None:

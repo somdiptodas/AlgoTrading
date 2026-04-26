@@ -18,7 +18,7 @@ from trader.ledger.entry import LedgerEntry
 from trader.ledger.store import LedgerStore
 from trader.reporting.report import render_experiment_report
 from trader.reporting.run_dashboard import LoopRunOutputs, ReportPathConventions, write_loop_run_outputs
-from trader.research.candidates import DeterministicCandidateQueue, ScoredCandidate
+from trader.research.candidates import CandidateQueueResult, DeterministicCandidateQueue, ScoredCandidate
 from trader.research.critic import HeuristicCritic
 from trader.research.critic_memory import CriticRegionMemory
 from trader.research.frontier import FrontierManager
@@ -33,6 +33,8 @@ _ALL_SIGNAL_FAMILIES = (*_DEFAULT_SIGNAL_FAMILIES, "vwap_deviation")
 DEFAULT_OVERPLAN_FACTOR = 4
 DEFAULT_PREVIEW_FACTOR = 4
 MIN_PLANNED_SPECS = 64
+MAX_PLANNER_RESTARTS = 2
+PLANNER_RESTART_DUPLICATE_RATE = 0.75
 TIMING_PHASES = (
     "planning",
     "key_compute",
@@ -112,6 +114,14 @@ def _planned_spec_count(batch_size: int, overplan_factor: int) -> int:
 
 def _max_preview_count(batch_size: int, preview_factor: int) -> int:
     return max(batch_size, batch_size * preview_factor)
+
+
+def _should_restart_planner(queue_result: CandidateQueueResult, planned_count: int) -> bool:
+    if planned_count <= 0:
+        return False
+    if queue_result.previewed_count == 0 and queue_result.duplicate_count > 0:
+        return True
+    return (queue_result.duplicate_count / planned_count) >= PLANNER_RESTART_DUPLICATE_RATE
 
 
 def _suppression_audit_types(
@@ -323,35 +333,52 @@ def main(argv: list[str] | None = None) -> None:
 
     signal_families = tuple(args.signal_family) if args.signal_family else _DEFAULT_SIGNAL_FAMILIES
     frontier_specs = tuple((entry.experiment_id, entry.spec) for entry in frontier_entries)
-    started = perf_counter()
-    planned = planner.plan(
-        batch_size=_planned_spec_count(args.batch_size, args.overplan_factor),
-        frontier_specs=frontier_specs,
-        allowed_signal_families=signal_families,
-        history_entries=history_entries,
-        optuna_dir=settings.research_dir / "optuna" / active_data_snapshot_id[:12],
-    )
-    generated = generator.validate_and_filter(
-        planned,
-        seen_evaluation_key=lambda spec: False,
-        evaluation_key_for_spec=lambda spec: spec.spec_hash(),
-    )
-    _add_timing(timings, "planning", started)
     candidate_queue = DeterministicCandidateQueue(
         history_entries=history_entries,
         frontier_entries=frontier_entries,
         critic_memory=critic_memory,
         suppressor=suppressor,
     )
-    queue_result = candidate_queue.build(
-        planned_specs=generated.accepted,
-        runner=runner,
-        num_folds=args.folds,
-        embargo_bars=args.embargo_bars,
-        locked_holdout_months=args.holdout_months,
-        max_preview_count=_max_preview_count(args.batch_size, args.preview_factor),
-        timings=timings,
-    )
+    planned = tuple()
+    generated = None
+    queue_result = None
+    planner_restarts = 0
+    for restart_index in range(MAX_PLANNER_RESTARTS + 1):
+        started = perf_counter()
+        planned = planner.plan(
+            batch_size=_planned_spec_count(args.batch_size, args.overplan_factor),
+            frontier_specs=frontier_specs,
+            allowed_signal_families=signal_families,
+            history_entries=history_entries,
+            optuna_dir=settings.research_dir / "optuna" / active_data_snapshot_id[:12],
+            restart_seed=loop_run_id,
+            restart_index=restart_index,
+        )
+        generated = generator.validate_and_filter(
+            planned,
+            seen_evaluation_key=lambda spec: False,
+            evaluation_key_for_spec=lambda spec: spec.spec_hash(),
+        )
+        _add_timing(timings, "planning", started)
+        queue_result = candidate_queue.build(
+            planned_specs=generated.accepted,
+            runner=runner,
+            num_folds=args.folds,
+            embargo_bars=args.embargo_bars,
+            locked_holdout_months=args.holdout_months,
+            max_preview_count=_max_preview_count(args.batch_size, args.preview_factor),
+            timings=timings,
+        )
+        if (
+            "multi_signal" not in signal_families
+            or restart_index >= MAX_PLANNER_RESTARTS
+            or not _should_restart_planner(queue_result, len(planned))
+        ):
+            break
+        planner_restarts += 1
+
+    if generated is None or queue_result is None:
+        raise RuntimeError("planner did not produce a candidate queue")
 
     completed = []
     completed_experiments = []
@@ -452,6 +479,7 @@ def main(argv: list[str] | None = None) -> None:
         "accepted": len(queue_result.selected),
         "completed": len(completed),
         "reused": reused,
+        "planner_restarts": planner_restarts,
         "counts": {
             "planned": len(planned),
             "previewed": queue_result.previewed_count,
