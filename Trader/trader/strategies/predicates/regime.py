@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from trader.data.models import MarketBar
-from trader.strategies.filters.regime import _intraday_realized_volatility_bps, _percentile_rank
+from trader.strategies.filters.regime import (
+    _intraday_realized_volatility_bps,
+    _percentile_rank,
+    _session_progress_stats,
+)
 from trader.strategies.decisions import SignalVote
 from trader.strategies.predicates.registry import PredicateHandler, PredicateRegistry
 
@@ -46,6 +50,41 @@ def normalize_intraday_volatility_params(params: dict[str, object]) -> dict[str,
 
 def intraday_volatility_required_history(params: dict[str, object]) -> int:
     return int(params["lookback"]) + int(params["percentile_window"])
+
+
+def normalize_day_type_params(params: dict[str, object]) -> dict[str, object]:
+    merged = {
+        "mode": "trend",
+        "min_bars": 30,
+        "trend_bps": 50.0,
+        "min_efficiency": 0.60,
+        "max_efficiency": 0.35,
+        **params,
+    }
+    mode = str(merged["mode"])
+    min_bars = int(merged["min_bars"])
+    trend_bps = float(merged["trend_bps"])
+    min_efficiency = float(merged["min_efficiency"])
+    max_efficiency = float(merged["max_efficiency"])
+    if mode not in {"trend", "mean_reversion"}:
+        raise ValueError("day_type.mode must be trend or mean_reversion")
+    if min_bars < 1:
+        raise ValueError("day_type.min_bars must be >= 1")
+    if trend_bps < 0:
+        raise ValueError("day_type.trend_bps must be >= 0")
+    if not 0.0 <= max_efficiency <= min_efficiency <= 1.0:
+        raise ValueError("day_type efficiency bounds must satisfy 0 <= max_efficiency <= min_efficiency <= 1")
+    return {
+        "mode": mode,
+        "min_bars": min_bars,
+        "trend_bps": trend_bps,
+        "min_efficiency": min_efficiency,
+        "max_efficiency": max_efficiency,
+    }
+
+
+def day_type_required_history(params: dict[str, object]) -> int:
+    return int(params["min_bars"])
 
 
 def generate_relative_volume_votes(
@@ -102,6 +141,30 @@ def generate_intraday_volatility_votes(
     return votes
 
 
+def generate_day_type_votes(
+    history_bars: tuple[MarketBar, ...],
+    test_bars: tuple[MarketBar, ...],
+    params: dict[str, object],
+) -> list[SignalVote]:
+    bars = history_bars + test_bars
+    history_count = len(history_bars)
+    stats = _session_progress_stats(bars)
+    votes: list[SignalVote] = []
+    for index in range(history_count, len(bars)):
+        count, move_bps, range_bps, efficiency = stats[index]
+        if count < int(params["min_bars"]):
+            votes.append(SignalVote("day_type", False, "day type unavailable"))
+        elif params["mode"] == "trend":
+            passed = move_bps >= float(params["trend_bps"]) and efficiency >= float(params["min_efficiency"])
+            detail = f"trend day move {move_bps:.2f} bps efficiency {efficiency:.2f}"
+            votes.append(SignalVote("day_type", passed, detail))
+        else:
+            passed = range_bps >= float(params["trend_bps"]) and efficiency <= float(params["max_efficiency"])
+            detail = f"mean reversion day range {range_bps:.2f} bps efficiency {efficiency:.2f}"
+            votes.append(SignalVote("day_type", passed, detail))
+    return votes
+
+
 def register(registry: PredicateRegistry) -> None:
     registry.register(
         "relative_volume",
@@ -117,5 +180,13 @@ def register(registry: PredicateRegistry) -> None:
             normalize_params=normalize_intraday_volatility_params,
             required_history=intraday_volatility_required_history,
             generate_votes=generate_intraday_volatility_votes,
+        ),
+    )
+    registry.register(
+        "day_type",
+        PredicateHandler(
+            normalize_params=normalize_day_type_params,
+            required_history=day_type_required_history,
+            generate_votes=generate_day_type_votes,
         ),
     )

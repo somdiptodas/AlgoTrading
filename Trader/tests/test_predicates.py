@@ -229,3 +229,27 @@ def test_intraday_volatility_predicate_votes_when_current_volatility_percentile_
     assert votes == [
         SignalVote("intraday_volatility", True, "intraday volatility percentile 100.00 in [50.00, 100.00]")
     ]
+
+
+def test_day_type_predicate_votes_when_session_to_date_behavior_matches_mode() -> None:
+    test = (_bar(0, 100.0), _bar(1, 101.0))
+
+    assert PREDICATES.validate_params("day_type", {"mode": "trend", "min_bars": 2, "trend_bps": "50"}) == {
+        "mode": "trend",
+        "min_bars": 2,
+        "trend_bps": 50.0,
+        "min_efficiency": 0.60,
+        "max_efficiency": 0.35,
+    }
+    assert PREDICATES.required_history("day_type", {"min_bars": 2}) == 2
+    votes = PREDICATES.generate_votes(
+        "day_type",
+        (),
+        test,
+        {"mode": "trend", "min_bars": 2, "trend_bps": 50.0, "min_efficiency": 0.60},
+    )
+
+    assert votes == [
+        SignalVote("day_type", False, "day type unavailable"),
+        SignalVote("day_type", True, "trend day move 100.00 bps efficiency 0.67"),
+    ]

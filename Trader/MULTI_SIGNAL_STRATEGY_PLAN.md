@@ -259,7 +259,7 @@ the checklist in each commit.
 - [ ] Add volume and regime predicates:
   - [x] `relative_volume`
   - [x] `intraday_volatility`
-  - [ ] `day_type`
+  - [x] `day_type`
 - [ ] Add no-lookahead tests for every atomic predicate.
 
 ### Phase 3: Multi-Signal Rule Evaluation
