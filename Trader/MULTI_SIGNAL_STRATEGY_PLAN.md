@@ -282,7 +282,7 @@ the checklist in each commit.
 - [x] While long, schedule exit from `exit_rule.passed`.
 - [ ] Preserve hard exits:
   - [x] stop loss
-  - [ ] session close
+  - [x] session close
   - [ ] final bar
 - [ ] Preserve one-position-at-a-time behavior.
 - [ ] Store entry decision details on the open position.

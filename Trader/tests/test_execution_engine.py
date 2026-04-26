@@ -112,3 +112,19 @@ def test_decision_engine_preserves_stop_loss_exit() -> None:
     assert len(result.trades) == 1
     assert result.trades[0].exit_reason == "stop_loss"
     assert result.trades[0].exit_price == pytest.approx(98.0)
+
+
+def test_decision_engine_preserves_session_close_exit() -> None:
+    bars = tuple(_bar(index, 100.0) for index in range(4))
+    decisions = (
+        _decision(True, False),
+        _decision(False, False),
+        _decision(False, False),
+        _decision(False, False),
+    )
+
+    result = run_long_only_decision_engine(bars, decisions, ExecConfig(initial_cash=100_000.0, slippage_bps=0.0))
+
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_timestamp_utc == bars[-1].timestamp_utc
+    assert result.trades[0].exit_reason == "session_close"
