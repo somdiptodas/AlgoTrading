@@ -344,13 +344,13 @@ the checklist in each commit.
 - [x] Inspect generated run dashboard, one run report, and trade visualizations
       for at least one winning and one losing strategy.
 - [x] Run 10 loop iterations with `multi_signal` only.
-- [ ] Report:
+- [x] Report:
   - [x] best Sharpe-like score.
   - [x] best return.
   - [x] trade count.
   - [x] duplicate/reused candidate rate.
   - [x] top-performing rule shapes.
-  - [ ] whether improvement is happening run over run.
+  - [x] whether improvement is happening run over run.
 
 ## Initial Success Criteria
 
