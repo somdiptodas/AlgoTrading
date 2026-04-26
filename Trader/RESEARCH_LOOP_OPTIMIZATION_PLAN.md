@@ -314,7 +314,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: Added NumPy as a runtime dependency, moved EMA/RSI/rolling primitive internals onto NumPy arrays while preserving list/`None` return contracts, vectorized exclusive rolling extrema, and rewrote intraday-volatility/session-progress helpers with array math scoped to current sessions.
   - Verification: focused primitive/leakage/regime/cache tests passed (`.venv/bin/pytest -q tests/test_feature_primitives.py tests/test_leakage.py tests/test_regime_filters.py tests/test_indicator_cache.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
-- [ ] **Process-pool parallel Stage B** (S6). 4–8 workers, single-writer ledger.
+- [x] **Process-pool parallel Stage B** (S6). 4–8 workers, single-writer ledger.
+  - Completed: 2026-04-25
+  - Implementation: Stage-B candidate evaluation now runs through a 4-8 worker `ProcessPoolExecutor`; each worker opens its own `EvaluationRunner` against the same database and returns only the `ExperimentResult` plus phase timings, while critique, artifact writes, ledger writes, and suppression audit logging remain single-writer in the parent process.
+  - Verification: focused loop/queue/robustness/ledger tests passed (`.venv/bin/pytest -q tests/test_loop_cmd.py tests/test_research_queue.py tests/test_robustness.py tests/test_ledger.py`); throwaway real ProcessPool smoke passed against a temporary SQLite DB; full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers.
 - [ ] **Down-sample stored equity to 30-minute granularity** (S10). Per-minute reconstructable from `trades.json`.
 
 ### P2 — better selection signal & reuse across runs

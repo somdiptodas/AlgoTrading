@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
+from pathlib import Path
 from time import perf_counter
+from typing import Callable, Sequence
 
 from trader.artifacts.store import ArtifactStore
 from trader.config import load_settings
 from trader.data.view import DataView
-from trader.evaluation.runner import DEFAULT_LOCKED_HOLDOUT_MONTHS, EvaluationRunner
+from trader.evaluation.runner import DEFAULT_LOCKED_HOLDOUT_MONTHS, EvaluationPreview, EvaluationRunner, ExperimentResult
 from trader.ledger.entry import json_dumps
 from trader.ledger.store import LedgerStore
 from trader.reporting.report import render_experiment_report
-from trader.research.candidates import DeterministicCandidateQueue
+from trader.research.candidates import DeterministicCandidateQueue, ScoredCandidate
 from trader.research.critic import HeuristicCritic
 from trader.research.frontier import FrontierManager
 from trader.research.generator import StrategyGenerator
@@ -119,6 +122,38 @@ def _timing_payload(timings: dict[str, float]) -> dict[str, float]:
     return {phase: round(timings.get(phase, 0.0), 6) for phase in TIMING_PHASES}
 
 
+def _stage_b_worker_count(candidate_count: int) -> int:
+    if candidate_count <= 0:
+        return 0
+    return min(8, max(4, candidate_count))
+
+
+def _evaluate_candidate_worker(payload: tuple[str, EvaluationPreview]) -> tuple[ExperimentResult, dict[str, float]]:
+    database_path, preview = payload
+    runner = EvaluationRunner(DataView(Path(database_path)), REGISTRY)
+    result = runner.evaluate_preview(preview, include_robustness=True)
+    return result, dict(runner.phase_timings)
+
+
+def _evaluate_selected_candidates(
+    selected_candidates: Sequence[ScoredCandidate],
+    database_path: str,
+    *,
+    executor_factory: Callable[..., object] = ProcessPoolExecutor,
+) -> tuple[tuple[ExperimentResult, ...], dict[str, float]]:
+    worker_count = _stage_b_worker_count(len(selected_candidates))
+    if worker_count == 0:
+        return tuple(), {}
+    payloads = tuple((database_path, candidate.preview) for candidate in selected_candidates)
+    with executor_factory(max_workers=worker_count) as executor:
+        outputs = tuple(executor.map(_evaluate_candidate_worker, payloads))
+    timings: dict[str, float] = {}
+    for _, worker_timings in outputs:
+        for phase in ("stage_a", "stage_b", "robustness_neighbors"):
+            timings[phase] = timings.get(phase, 0.0) + worker_timings.get(phase, 0.0)
+    return tuple(result for result, _ in outputs), timings
+
+
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     timings = _new_timings()
@@ -178,11 +213,10 @@ def main(argv: list[str] | None = None) -> None:
     completed = []
     reused = queue_result.duplicate_count
     selected_candidates = queue_result.selected[: args.batch_size]
-    for candidate in selected_candidates:
-        before_eval_timings = dict(runner.phase_timings)
-        result = runner.evaluate_preview(candidate.preview, include_robustness=True)
-        for phase in ("stage_a", "stage_b", "robustness_neighbors"):
-            timings[phase] += runner.phase_timings.get(phase, 0.0) - before_eval_timings.get(phase, 0.0)
+    results, worker_timings = _evaluate_selected_candidates(selected_candidates, str(settings.database_path))
+    for phase in ("stage_a", "stage_b", "robustness_neighbors"):
+        timings[phase] += worker_timings.get(phase, 0.0)
+    for candidate, result in zip(selected_candidates, results):
         critique = critic.critique(result)
         report_markdown = render_experiment_report(result, critique=critique.to_payload())
         started = perf_counter()
