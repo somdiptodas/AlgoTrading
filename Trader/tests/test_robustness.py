@@ -39,6 +39,14 @@ class _AlwaysLongRegistry:
         return 1.0
 
 
+class _FixedNeighborRegistry:
+    def __init__(self, neighbors: tuple[StrategySpec, ...]) -> None:
+        self._neighbors = neighbors
+
+    def neighbors(self, spec: StrategySpec) -> tuple[StrategySpec, ...]:
+        return self._neighbors
+
+
 def _trade(exit_timestamp_utc: str, pnl_cash: float) -> Trade:
     return Trade(
         entry_timestamp_utc="2026-01-01T14:30:00+00:00",
@@ -130,6 +138,16 @@ def _checks_for(trades: tuple[Trade, ...]) -> dict[str, float | bool]:
         neighbor_metric_fn=lambda spec: {},
     )
     return result.checks
+
+
+def _ema_spec(name: str, fast_length: int) -> StrategySpec:
+    return StrategySpec(
+        name=name,
+        signal=SignalSpec(
+            "ema_cross",
+            {"fast_length": fast_length, "slow_length": 80, "signal_buffer_bps": 0.0},
+        ),
+    )
 
 
 def test_monthly_strategy_pnl_uses_trade_exit_local_month() -> None:
@@ -236,6 +254,63 @@ def test_top_trade_concentration_fails_closed_without_positive_trades() -> None:
     assert checks["top_3_trade_pnl_concentration_pct"] == 100.0
     assert checks["positive_trade_pnl_count"] == 0.0
     assert checks["top_trade_concentration_pass"] is False
+
+
+def test_neighborhood_robustness_evaluates_three_largest_delta_neighbors() -> None:
+    spec = _ema_spec("base", 20)
+    neighbors = (
+        _ema_spec("small_1", 21),
+        _ema_spec("small_2", 22),
+        _ema_spec("large_1", 25),
+        _ema_spec("large_2", 30),
+        _ema_spec("large_3", 35),
+    )
+    called: list[str] = []
+
+    def neighbor_metrics(neighbor_spec: StrategySpec) -> dict[str, float]:
+        called.append(neighbor_spec.name)
+        return {"return_pct": 9.0, "sharpe_like": 0.45}
+
+    result = assess_robustness(
+        spec=spec,
+        aggregate_metrics={"return_pct": 10.0, "sharpe_like": 0.5, "max_drawdown_pct": 1.0},
+        fold_metrics=({"return_pct": 1.0},),
+        fold_backtests=(_backtest(tuple()),),
+        registry=_FixedNeighborRegistry(neighbors),
+        neighbor_metric_fn=neighbor_metrics,
+    )
+
+    assert set(called) == {"large_1", "large_2", "large_3"}
+    assert result.checks["neighborhood_sample_count"] == 3.0
+    assert result.checks["neighborhood_median_return_pct"] == 9.0
+    assert result.checks["neighborhood_pass"] is True
+
+
+def test_neighborhood_bootstrap_ci_can_fail_peaky_results() -> None:
+    neighbor_returns = {"large_1": 0.0, "large_2": 12.0, "large_3": 12.0}
+    neighbor_sharpes = {"large_1": 0.5, "large_2": 0.5, "large_3": 0.5}
+
+    def neighbor_metrics(neighbor_spec: StrategySpec) -> dict[str, float]:
+        return {
+            "return_pct": neighbor_returns[neighbor_spec.name],
+            "sharpe_like": neighbor_sharpes[neighbor_spec.name],
+        }
+
+    result = assess_robustness(
+        spec=_ema_spec("base", 20),
+        aggregate_metrics={"return_pct": 11.0, "sharpe_like": 0.5, "max_drawdown_pct": 1.0},
+        fold_metrics=({"return_pct": 1.0},),
+        fold_backtests=(_backtest(tuple()),),
+        registry=_FixedNeighborRegistry(
+            (_ema_spec("large_1", 25), _ema_spec("large_2", 30), _ema_spec("large_3", 35))
+        ),
+        neighbor_metric_fn=neighbor_metrics,
+    )
+
+    assert result.checks["neighborhood_median_return_pct"] == 12.0
+    assert result.checks["neighborhood_return_gap_pct"] == -1.0
+    assert result.checks["neighborhood_return_gap_ci_high_pct"] == 11.0
+    assert result.checks["neighborhood_pass"] is False
 
 
 def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypatch) -> None:

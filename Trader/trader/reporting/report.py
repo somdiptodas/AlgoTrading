@@ -84,8 +84,14 @@ _ROBUSTNESS_ORDER = (
     "top_3_trade_pnl_concentration_pct",
     "positive_trade_pnl_count",
     "neighborhood_pass",
+    "neighborhood_sample_count",
     "neighborhood_gap_pct",
+    "neighborhood_return_gap_ci_high_pct",
     "neighborhood_median_return_pct",
+    "neighborhood_return_ci_low_pct",
+    "neighborhood_return_ci_high_pct",
+    "neighborhood_sharpe_gap",
+    "neighborhood_sharpe_gap_ci_high",
     "drawdown_pass",
 )
 
@@ -144,8 +150,17 @@ _METRIC_LABELS = {
     "top_3_trade_pnl_concentration_pct": "Top 3 trade PnL concentration",
     "positive_trade_pnl_count": "Positive trade PnL count",
     "neighborhood_pass": "Neighborhood pass",
+    "neighborhood_sample_count": "Neighborhood sample count",
     "neighborhood_gap_pct": "Neighborhood gap",
+    "neighborhood_return_gap_ci_high_pct": "Neighborhood return gap CI high",
     "neighborhood_median_return_pct": "Neighborhood median return",
+    "neighborhood_return_ci_low_pct": "Neighborhood return CI low",
+    "neighborhood_return_ci_high_pct": "Neighborhood return CI high",
+    "neighborhood_median_sharpe_like": "Neighborhood median Sharpe-like",
+    "neighborhood_sharpe_gap": "Neighborhood Sharpe gap",
+    "neighborhood_sharpe_gap_ci_high": "Neighborhood Sharpe gap CI high",
+    "neighborhood_sharpe_ci_low": "Neighborhood Sharpe CI low",
+    "neighborhood_sharpe_ci_high": "Neighborhood Sharpe CI high",
     "drawdown_pass": "Drawdown pass",
 }
 
@@ -169,7 +184,10 @@ _SIGNED_PERCENT_METRICS = {
     "regime_high_vol_return_pct",
     "regime_low_vol_return_pct",
     "neighborhood_gap_pct",
+    "neighborhood_return_gap_ci_high_pct",
     "neighborhood_median_return_pct",
+    "neighborhood_return_ci_low_pct",
+    "neighborhood_return_ci_high_pct",
 }
 
 
@@ -454,7 +472,7 @@ def _label_for_metric(name: str) -> str:
 def _format_metric_value(name: str, value: float | bool) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
-    if name in {"trade_count", "positive_trade_pnl_count"} or name.endswith("_day_count"):
+    if name in {"trade_count", "positive_trade_pnl_count", "neighborhood_sample_count"} or name.endswith("_day_count"):
         return f"{int(round(value)):,}"
     if name.endswith("_pct"):
         signed = name in _SIGNED_PERCENT_METRICS

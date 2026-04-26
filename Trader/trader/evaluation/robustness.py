@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from statistics import mean, median
+from itertools import product
+from statistics import median
 from typing import Callable, Iterable, Sequence
 
 from trader.data.models import NEW_YORK
@@ -15,6 +16,9 @@ from trader.strategies.spec import StrategySpec
 MONTHLY_PNL_CONCENTRATION_LIMIT_PCT = 80.0
 TOP_TRADE_CONCENTRATION_COUNT = 3
 TOP_TRADE_CONCENTRATION_LIMIT_PCT = 50.0
+NEIGHBORHOOD_SAMPLE_COUNT = 3
+NEIGHBORHOOD_RETURN_GAP_LIMIT_PCT = 10.0
+NEIGHBORHOOD_SHARPE_GAP_LIMIT = 0.5
 
 
 @dataclass(frozen=True)
@@ -52,7 +56,7 @@ def assess_robustness(
     top_trade_concentration_pass = top_trade_concentration <= TOP_TRADE_CONCENTRATION_LIMIT_PCT
     neighborhood_returns: list[float] = []
     neighborhood_sharpes: list[float] = []
-    for neighbor_spec in registry.neighbors(spec)[:6]:
+    for neighbor_spec in _select_neighborhood_specs(spec, registry.neighbors(spec)):
         try:
             neighbor_metrics = neighbor_metric_fn(neighbor_spec)
             neighborhood_returns.append(neighbor_metrics["return_pct"])
@@ -63,12 +67,27 @@ def assess_robustness(
     neighborhood_sharpe_median = (
         median(neighborhood_sharpes) if neighborhood_sharpes else aggregate_metrics.get("sharpe_like", 0.0)
     )
+    neighborhood_return_ci_low, neighborhood_return_ci_high = _bootstrap_median_ci(
+        neighborhood_returns,
+        fallback=neighborhood_return_median,
+    )
+    neighborhood_sharpe_ci_low, neighborhood_sharpe_ci_high = _bootstrap_median_ci(
+        neighborhood_sharpes,
+        fallback=neighborhood_sharpe_median,
+    )
     neighborhood_return_gap = aggregate_metrics["return_pct"] - neighborhood_return_median
     neighborhood_sharpe_gap = aggregate_metrics.get("sharpe_like", 0.0) - neighborhood_sharpe_median
+    neighborhood_return_gap_ci_high = aggregate_metrics["return_pct"] - neighborhood_return_ci_low
+    neighborhood_sharpe_gap_ci_high = aggregate_metrics.get("sharpe_like", 0.0) - neighborhood_sharpe_ci_low
     # A strategy is neighborhood-stable only if it does not dramatically outperform its
     # parameter neighbors on BOTH return and risk-adjusted return. A spike in return
     # alone might be a lucky period; a spike in Sharpe too signals genuine overfitting.
-    neighborhood_pass = neighborhood_return_gap <= 10.0 and neighborhood_sharpe_gap <= 0.5
+    neighborhood_pass = (
+        neighborhood_return_gap <= NEIGHBORHOOD_RETURN_GAP_LIMIT_PCT
+        and neighborhood_sharpe_gap <= NEIGHBORHOOD_SHARPE_GAP_LIMIT
+        and neighborhood_return_gap_ci_high <= NEIGHBORHOOD_RETURN_GAP_LIMIT_PCT
+        and neighborhood_sharpe_gap_ci_high <= NEIGHBORHOOD_SHARPE_GAP_LIMIT
+    )
     checks: dict[str, float | bool] = {
         "positive_fold_ratio": positive_fold_ratio,
         "fold_consistency_pass": positive_fold_ratio >= 0.5,
@@ -81,11 +100,18 @@ def assess_robustness(
         "top_3_trade_pnl_concentration_pct": top_trade_concentration,
         "positive_trade_pnl_count": float(positive_trade_pnl_count),
         "top_trade_concentration_pass": top_trade_concentration_pass,
+        "neighborhood_sample_count": float(len(neighborhood_returns)),
         "neighborhood_median_return_pct": neighborhood_return_median,
+        "neighborhood_return_ci_low_pct": neighborhood_return_ci_low,
+        "neighborhood_return_ci_high_pct": neighborhood_return_ci_high,
         "neighborhood_gap_pct": neighborhood_return_gap,  # kept for backward compat
         "neighborhood_return_gap_pct": neighborhood_return_gap,
+        "neighborhood_return_gap_ci_high_pct": neighborhood_return_gap_ci_high,
         "neighborhood_median_sharpe_like": neighborhood_sharpe_median,
+        "neighborhood_sharpe_ci_low": neighborhood_sharpe_ci_low,
+        "neighborhood_sharpe_ci_high": neighborhood_sharpe_ci_high,
         "neighborhood_sharpe_gap": neighborhood_sharpe_gap,
+        "neighborhood_sharpe_gap_ci_high": neighborhood_sharpe_gap_ci_high,
         "neighborhood_pass": neighborhood_pass,
         "drawdown_pass": aggregate_metrics.get("max_drawdown_pct", 100.0) <= 20.0,
     }
@@ -136,3 +162,57 @@ def _top_trade_pnl_concentration(backtests: Sequence[BacktestResult], *, top_n: 
     if total <= 0.0:
         return 100.0, 0
     return (sum(positive_pnl[:top_n]) / total) * 100.0, len(positive_pnl)
+
+
+def _select_neighborhood_specs(
+    spec: StrategySpec,
+    neighbors: Sequence[StrategySpec],
+) -> tuple[StrategySpec, ...]:
+    base_payload = spec.to_payload(include_name=False)
+    ranked = sorted(
+        neighbors,
+        key=lambda neighbor: (
+            -_payload_delta(base_payload, neighbor.to_payload(include_name=False)),
+            neighbor.spec_hash(),
+        ),
+    )
+    return tuple(ranked[:NEIGHBORHOOD_SAMPLE_COUNT])
+
+
+def _payload_delta(left: object, right: object) -> float:
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return min(abs(float(left) - float(right)) / max(abs(float(left)), abs(float(right)), 1.0), 1.0)
+    if isinstance(left, dict) and isinstance(right, dict):
+        keys = sorted(set(left) | set(right))
+        if not keys:
+            return 0.0
+        return sum(_payload_delta(left.get(key), right.get(key)) for key in keys) / len(keys)
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        size = max(len(left), len(right))
+        if size == 0:
+            return 0.0
+        return sum(
+            _payload_delta(
+                left[index] if index < len(left) else None,
+                right[index] if index < len(right) else None,
+            )
+            for index in range(size)
+        ) / size
+    return 0.0 if left == right else 1.0
+
+
+def _bootstrap_median_ci(values: Sequence[float], *, fallback: float) -> tuple[float, float]:
+    if not values:
+        return fallback, fallback
+    medians = sorted(
+        median(sample)
+        for sample in product(values, repeat=len(values))
+    )
+    return _percentile(medians, 2.5), _percentile(medians, 97.5)
+
+
+def _percentile(values: Sequence[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    index = round((percentile / 100.0) * (len(values) - 1))
+    return values[min(max(index, 0), len(values) - 1)]

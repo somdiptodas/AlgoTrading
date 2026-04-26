@@ -349,7 +349,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: Added a per-runner subhash cache keyed by full snapshot ID and exclusive slice bounds, and reused it for research and holdout snapshot IDs without changing split boundaries.
   - Verification: focused holdout/cache tests passed (`.venv/bin/pytest -q tests/test_holdout.py tests/test_indicator_cache.py tests/test_baselines.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers in the S3 implementation and confirmed unrelated follow-up/data working-tree changes should stay out of this commit.
-- [ ] **Reduce neighbor count to 3** with median + bootstrap CI (S7).
+- [x] **Reduce neighbor count to 3** with median + bootstrap CI (S7).
+  - Completed: 2026-04-25
+  - Implementation: Robustness now evaluates the three deterministic highest-delta neighbors, reports median return/Sharpe plus exact bootstrap-median CI fields, and gates neighborhood stability on both median gaps and conservative CI-high gaps.
+  - Verification: focused robustness/promotion/report/cost tests passed (`.venv/bin/pytest -q tests/test_robustness.py tests/test_promotion.py tests/test_ledger.py tests/test_costs.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers in the S7 implementation and confirmed unrelated follow-up/data working-tree changes should stay out of this commit.
 
 ### P3 — open new search modes
 
