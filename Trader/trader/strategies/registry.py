@@ -5,8 +5,9 @@ from dataclasses import replace
 from typing import Callable
 
 from trader.data.models import MarketBar
+from trader.strategies.decisions import TradeDecision, legacy_regime_to_trade_decisions
 from trader.strategies.filters import regime, session
-from trader.strategies.signals import breakout, composite, ema_cross, rsi_reversion, vwap_deviation
+from trader.strategies.signals import breakout, composite, ema_cross, multi_signal, rsi_reversion, vwap_deviation
 from trader.strategies.sizers import fixed_fraction, full_notional
 from trader.strategies.spec import FilterSpec, ParamValue, SignalSpec, StrategySpec
 
@@ -51,6 +52,14 @@ class StrategyRegistry:
                 "generate_regime": composite.generate_regime,
                 "parameter_grid": composite.parameter_grid,
                 "neighbors": composite.neighbors,
+            },
+            "multi_signal": {
+                "normalize_params": multi_signal.normalize_params,
+                "required_history": multi_signal.required_history,
+                "generate_regime": multi_signal.generate_regime,
+                "generate_decisions": multi_signal.generate_decisions,
+                "parameter_grid": multi_signal.parameter_grid,
+                "neighbors": multi_signal.neighbors,
             },
         }
         self.sizing_handlers = {
@@ -195,6 +204,18 @@ class StrategyRegistry:
             mask = self.filter_handlers[filter_spec.name]["generate_mask"](history_bars, test_bars, filter_spec.params)
             signal_regime = [regime_on and mask_on for regime_on, mask_on in zip(signal_regime, mask)]
         return signal_regime
+
+    def generate_decisions(
+        self,
+        spec: StrategySpec,
+        history_bars: tuple[MarketBar, ...],
+        test_bars: tuple[MarketBar, ...],
+    ) -> tuple[TradeDecision, ...]:
+        validated = self.validate_spec(spec)
+        handler = self.signal_handlers[validated.signal.name].get("generate_decisions")
+        if handler is not None:
+            return tuple(handler(history_bars, test_bars, validated.signal.params))
+        return legacy_regime_to_trade_decisions(self.generate_regime(validated, history_bars, test_bars))
 
     def compute_sizing_fraction(self, spec: StrategySpec) -> float:
         validated = self.validate_spec(spec)
