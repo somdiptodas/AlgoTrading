@@ -209,3 +209,21 @@ def test_legacy_regime_engine_path_still_runs_without_decision_details() -> None
     assert result.trades[0].exit_reason == "signal_flip"
     assert result.trades[0].entry_rule is None
     assert result.trades[0].exit_rule is None
+
+
+def test_decision_engine_supports_entry_exit_asymmetry_and_reason_persistence() -> None:
+    bars = tuple(_bar(index, 100.0) for index in range(4))
+    entry_rule = RuleDecision(True, "entry: 3/3 confirmations")
+    exit_rule = RuleDecision(True, "exit: rsi_above confirmed")
+    decisions = (
+        TradeDecision(entry_rule, RuleDecision(False, "exit: no vote")),
+        TradeDecision(RuleDecision(False, "entry: no vote"), exit_rule),
+        _decision(False, False),
+        _decision(False, False),
+    )
+
+    result = run_long_only_decision_engine(bars, decisions, ExecConfig(initial_cash=100_000.0, slippage_bps=0.0))
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_reason == "entry: 3/3 confirmations"
+    assert result.trades[0].exit_reason == "exit: rsi_above confirmed"

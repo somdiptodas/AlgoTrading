@@ -288,7 +288,7 @@ the checklist in each commit.
 - [x] Store entry decision details on the open position.
 - [x] Copy entry and exit decision details into each completed trade.
 - [x] Keep the old regime-based engine path available for legacy strategies.
-- [ ] Add focused tests for entry/exit asymmetry and reason persistence.
+- [x] Add focused tests for entry/exit asymmetry and reason persistence.
 
 ### Phase 5: Ledger And Artifacts
 
