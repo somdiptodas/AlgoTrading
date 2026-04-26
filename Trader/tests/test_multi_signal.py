@@ -360,3 +360,54 @@ def test_registry_generate_decisions_wraps_legacy_regimes() -> None:
 
     assert len(decisions) == 3
     assert decisions[0].entry.votes[0].name == "legacy_regime"
+
+
+def test_multi_signal_decisions_do_not_change_prefix_when_future_bars_change() -> None:
+    history = tuple(
+        _bar(index, 100.0 + ((index % 5) - 2) * 0.35, volume=1_000.0 + index * 10, vwap=100.0)
+        for index in range(8)
+    )
+    test = tuple(
+        _bar(8 + index, 100.0 + ((index % 7) - 3) * 0.45, volume=1_200.0 + index * 25, vwap=100.25)
+        for index in range(8)
+    )
+    spec = StrategySpec(
+        name="multi_signal_no_lookahead",
+        signal=SignalSpec(
+            "multi_signal",
+            {
+                "entry_rule": {
+                    "combiner": "k_of_n",
+                    "k": 2,
+                    "signals": [
+                        {"name": "rsi_below", "params": {"length": 3, "threshold": 60.0}},
+                        {"name": "vwap_distance", "params": {"side": "below", "min_bps": 1.0}},
+                        {"name": "relative_volume", "params": {"lookback": 3, "min_ratio": 0.5}},
+                    ],
+                },
+                "exit_rule": {
+                    "combiner": "any",
+                    "signals": [
+                        {"name": "rsi_above", "params": {"length": 3, "threshold": 40.0}},
+                        {"name": "vwap_reclaimed", "params": {"min_bps": 0.0}},
+                        {"name": "ema_trend_down", "params": {"fast": 2, "slow": 4}},
+                    ],
+                },
+            },
+        ),
+    )
+    baseline = REGISTRY.generate_decisions(spec, history, test)
+
+    for prefix_end in range(len(test) - 1):
+        altered = list(test)
+        for future_index in range(prefix_end + 1, len(altered)):
+            altered[future_index] = _bar(
+                8 + future_index,
+                200.0 + future_index,
+                volume=10_000.0 + future_index,
+                vwap=50.0,
+            )
+
+        decisions = REGISTRY.generate_decisions(spec, history, tuple(altered))
+
+        assert decisions[: prefix_end + 1] == baseline[: prefix_end + 1]

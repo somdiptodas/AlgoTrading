@@ -272,7 +272,7 @@ the checklist in each commit.
 - [x] Compute required history as the max required history across entry and exit
       children.
 - [x] Add tests for asymmetric entry and exit rules.
-- [ ] Add tests that prove changing future bars does not alter current
+- [x] Add tests that prove changing future bars does not alter current
       decisions.
 
 ### Phase 4: Engine Integration
