@@ -180,6 +180,7 @@ def render_trade_visualization(experiment_dir: Path) -> str:
     .vote-status.failed {{ color: var(--exit); }}
     .vote-row.vote-passed .reason-code {{ color: var(--entry); }}
     .vote-row.vote-failed .reason-code {{ color: var(--exit); }}
+    .legacy-note {{ color: var(--warn); font-size: 12px; font-weight: 700; }}
     .empty {{ color: var(--muted); margin: 8px 0 0; }}
   </style>
 </head>
@@ -357,8 +358,8 @@ def _rule_cell(trade: Mapping[str, Any], prefix: str) -> str:
     rule = _rule_decision(trade, prefix)
     if rule is None:
         return (
-            '<div class="reason-code">n/a</div>'
-            '<div class="reason-detail">No structured rule data was recorded.</div>'
+            '<div class="legacy-note">Legacy artifact</div>'
+            f'<div class="reason-detail">Using the recorded {html.escape(prefix)} reason string.</div>'
         )
 
     passed = rule.get("passed")
@@ -387,7 +388,12 @@ def _vote_details_cell(trade: Mapping[str, Any]) -> str:
     entry_votes = _rule_votes(trade, "entry")
     exit_votes = _rule_votes(trade, "exit")
     if not entry_votes and not exit_votes:
-        return '<div class="reason-detail">No vote details were recorded.</div>'
+        if _rule_decision(trade, "entry") is None and _rule_decision(trade, "exit") is None:
+            return (
+                '<div class="legacy-note">Legacy artifact: vote data unavailable</div>'
+                '<div class="reason-detail">Using recorded entry and exit reason strings.</div>'
+            )
+        return '<div class="reason-detail">No child signal votes were recorded for this trade.</div>'
 
     groups = "\n".join(
         group
