@@ -108,6 +108,7 @@ def test_write_run_report_from_json_renders_loop_and_experiment_links(tmp_path: 
     assert "Loop Run run_1" in html
     assert "Promoted" in html
     assert "exp_1" in html
+    assert 'href="../index.html"' in html
     assert 'href="run_1.json"' in html
     assert 'href="../exp_1_trades.html"' in html
     assert 'href="../exp_1.md"' in html
@@ -225,3 +226,4 @@ def test_write_loop_run_outputs_persists_json_and_refreshes_html(tmp_path: Path)
     assert paths.run_html_path("run_1").exists()
     assert paths.dashboard_path.exists()
     assert paths.experiment_trade_html_path("exp_1").exists()
+    assert 'href="../index.html"' in paths.run_html_path("run_1").read_text(encoding="utf-8")

@@ -311,6 +311,8 @@ the checklist in each commit.
       local artifacts.
 - [x] Update the loop command to write or refresh the run HTML and main
       dashboard after each loop run.
+- [x] Add relevant navigation links across generated run, dashboard, and
+      experiment artifact files.
 - [ ] Update the trade HTML report to show rule-level entry and exit reasons.
 - [ ] Add expandable vote details per trade.
 - [ ] Show passed and failed child signals distinctly.

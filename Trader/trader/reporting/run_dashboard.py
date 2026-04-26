@@ -172,6 +172,7 @@ def render_run_report(
 
     body = "\n".join(
         [
+            _render_run_navigation(paths.dashboard_path, target_path),
             _render_summary(loop_payload, counts, promoted),
             _render_artifact_links(loop_json_path, target_path),
             _render_experiment_table(experiments, paths, target_path),
@@ -198,6 +199,7 @@ def render_run_report(
     .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; margin: 18px 0 8px; }}
     .card, section {{ background: #ffffff; border: 1px solid #dce3e8; border-radius: 8px; }}
     .card {{ padding: 14px; }}
+    nav {{ margin-bottom: 18px; font-size: 14px; }}
     .card strong {{ display: block; font-size: 22px; margin-bottom: 3px; }}
     section {{ padding: 18px; margin-top: 16px; overflow-x: auto; }}
     table {{ border-collapse: collapse; width: 100%; font-size: 14px; }}
@@ -351,6 +353,10 @@ def _render_summary(loop_payload: Mapping[str, Any], counts: Mapping[str, Any], 
             "</div>",
         ]
     )
+
+
+def _render_run_navigation(dashboard_path: Path, output_path: Path) -> str:
+    return f"<nav>{_link('Dashboard', dashboard_path, output_path)}</nav>"
 
 
 def _render_artifact_links(loop_json_path: Path | None, output_path: Path) -> str:
@@ -525,7 +531,11 @@ def _link_or_unavailable(label: str, target_path: Path, output_path: Path) -> st
     escaped_label = html.escape(label)
     if not target_path.exists():
         return f'<span class="missing">{escaped_label} unavailable</span>'
-    return f'<a href="{html.escape(_relative_href(output_path, target_path))}">{escaped_label}</a>'
+    return _link(label, target_path, output_path)
+
+
+def _link(label: str, target_path: Path, output_path: Path) -> str:
+    return f'<a href="{html.escape(_relative_href(output_path, target_path))}">{html.escape(label)}</a>'
 
 
 def _relative_href(source_path: Path, target_path: Path) -> str:
