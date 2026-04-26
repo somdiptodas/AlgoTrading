@@ -195,6 +195,32 @@ def test_legacy_trade_payload_reads_without_decision_trace_fields() -> None:
     assert trade.exit_rule is None
 
 
+def test_artifact_trades_json_persists_entry_and_exit_votes(tmp_path: Path) -> None:
+    result = _sample_result()
+    entry_rule = RuleDecision(True, "entry all passed", (SignalVote("entry_a", True, "ok"),))
+    exit_rule = RuleDecision(True, "exit any passed", (SignalVote("exit_a", True, "ok"),))
+    fold = result.fold_results[0]
+    trade = replace(
+        fold.backtest.trades[0],
+        entry_reason=entry_rule.reason,
+        exit_reason=exit_rule.reason,
+        entry_rule=entry_rule,
+        exit_rule=exit_rule,
+    )
+    updated_result = replace(
+        result,
+        fold_results=(replace(fold, backtest=replace(fold.backtest, trades=(trade,))),),
+    )
+    artifacts = ArtifactStore(tmp_path / "artifacts", tmp_path / "reports")
+
+    artifact_paths = artifacts.write_experiment(updated_result)
+
+    trades_payload = json.loads(Path(artifact_paths["trades"]).read_text(encoding="utf-8"))
+    trade_payload = trades_payload["folds"][0]["trades"][0]
+    assert trade_payload["entry_votes"] == [{"name": "entry_a", "passed": True, "detail": "ok"}]
+    assert trade_payload["exit_votes"] == [{"name": "exit_a", "passed": True, "detail": "ok"}]
+
+
 def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:
     result = _sample_result()
     ledger = LedgerStore(tmp_path / "ledger.db")
