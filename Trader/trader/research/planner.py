@@ -420,6 +420,14 @@ class DeterministicPlanner:
         completed_by_family = _completed_entries_by_family(history_entries)
         buckets: list[Iterable[PlannedSpec]] = []
         for signal_name in allowed_signal_families:
+            if signal_name == "multi_signal":
+                buckets.extend(
+                    self._multi_signal_optuna_candidate_buckets(
+                        history_entries=history_entries,
+                        optuna_dir=optuna_dir,
+                    )
+                )
+                continue
             if signal_name == "composite":
                 continue
             signal_grid = self.registry.parameter_grid(signal_name)
@@ -455,6 +463,66 @@ class DeterministicPlanner:
                     )
                 )
             if candidates:
+                buckets.append(candidates)
+        return buckets
+
+    def _multi_signal_optuna_candidate_buckets(
+        self,
+        *,
+        history_entries: Sequence[LedgerEntry],
+        optuna_dir: Path,
+    ) -> list[Iterable[PlannedSpec]]:
+        buckets: list[Iterable[PlannedSpec]] = []
+        completed_by_shape = _completed_multi_signal_entries_by_shape(history_entries)
+        for shape_key, shape_entries in completed_by_shape.items():
+            if len(shape_entries) < _OPTUNA_SEED_EVALUATION_THRESHOLD:
+                continue
+            best_entry = max(shape_entries, key=lambda entry: entry.metric("return_pct"))
+            shapes = _multi_signal_shapes_from_spec(best_entry.spec)
+            if shapes is None:
+                continue
+            entry_shape, exit_shape = shapes
+            choices_by_key = _multi_signal_choices_by_key(entry_shape, exit_shape)
+            if not choices_by_key:
+                continue
+            suggested_params = _suggest_tpe_flat_params(
+                study_label=f"multi_signal_{_stable_seed(shape_key):08x}",
+                choices_by_key=choices_by_key,
+                history_entries=shape_entries,
+                flatten_entry_params=lambda entry: _flatten_multi_signal_params(entry.spec.signal.params, choices_by_key),
+                limit=_OPTUNA_SUGGESTIONS_PER_FAMILY,
+                optuna_dir=optuna_dir,
+            )
+            candidates: list[PlannedSpec] = []
+            for flat_params in suggested_params:
+                spec = self.registry.validate_spec(
+                    StrategySpec(
+                        name="multi_signal_optuna_tpe",
+                        signal=SignalSpec(
+                            "multi_signal",
+                            _multi_signal_params_from_flat(entry_shape, exit_shape, flat_params),
+                        ),
+                        sizing=best_entry.spec.sizing,
+                        filters=best_entry.spec.filters,
+                        exec_config=best_entry.spec.exec_config,
+                        tags=(MULTI_SIGNAL_SEARCH_SPACE_VERSION, "optuna_tpe"),
+                    )
+                )
+                candidates.append(
+                    PlannedSpec(
+                        spec=self._rename(spec),
+                        generator_kind="optuna_tpe",
+                        parent_experiment_ids=(best_entry.experiment_id,),
+                    )
+                )
+            if candidates:
+                _write_multi_signal_study_snapshot(
+                    shape_key,
+                    optuna_dir,
+                    shape_entries,
+                    choices_by_key,
+                    suggested_params,
+                )
                 buckets.append(candidates)
         return buckets
 
@@ -564,6 +632,117 @@ def _multi_signal_rule_payload(shape: MultiSignalRuleShape, variant_index: int) 
     return rule
 
 
+def _multi_signal_shapes_from_spec(spec: StrategySpec) -> tuple[MultiSignalRuleShape, MultiSignalRuleShape] | None:
+    if spec.signal.name != "multi_signal":
+        return None
+    entry_shape = _multi_signal_shape_from_rule(spec.signal.params.get("entry_rule"))
+    exit_shape = _multi_signal_shape_from_rule(spec.signal.params.get("exit_rule"))
+    if entry_shape is None or exit_shape is None:
+        return None
+    return entry_shape, exit_shape
+
+
+def _multi_signal_shape_from_rule(rule: object) -> MultiSignalRuleShape | None:
+    if not isinstance(rule, dict):
+        return None
+    signals = rule.get("signals")
+    if not isinstance(signals, list):
+        return None
+    predicates = tuple(
+        sorted(
+            str(signal.get("name", ""))
+            for signal in signals
+            if isinstance(signal, dict) and signal.get("name") in _MULTI_SIGNAL_PREDICATE_PARAM_GRIDS
+        )
+    )
+    if len(predicates) < 3:
+        return None
+    combiner = str(rule.get("combiner", "all"))
+    k = int(rule["k"]) if combiner == "k_of_n" and "k" in rule else None
+    return MultiSignalRuleShape(combiner, predicates, k=k)
+
+
+def _multi_signal_choices_by_key(
+    entry_shape: MultiSignalRuleShape,
+    exit_shape: MultiSignalRuleShape,
+) -> dict[str, tuple[object, ...]]:
+    choices: dict[str, tuple[object, ...]] = {}
+    for scope, shape in (("entry", entry_shape), ("exit", exit_shape)):
+        for predicate in shape.predicates:
+            for param_name in sorted({key for params in _MULTI_SIGNAL_PREDICATE_PARAM_GRIDS[predicate] for key in params}):
+                values = tuple(
+                    sorted(
+                        {params[param_name] for params in _MULTI_SIGNAL_PREDICATE_PARAM_GRIDS[predicate] if param_name in params},
+                        key=lambda value: str(value),
+                    )
+                )
+                if values:
+                    choices[f"{scope}.{predicate}.{param_name}"] = values
+    return choices
+
+
+def _flatten_multi_signal_params(
+    params: dict[str, object],
+    choices_by_key: dict[str, tuple[object, ...]],
+) -> dict[str, object]:
+    flattened: dict[str, object] = {}
+    for scope, rule_name in (("entry", "entry_rule"), ("exit", "exit_rule")):
+        rule = params.get(rule_name)
+        if not isinstance(rule, dict):
+            continue
+        signals = rule.get("signals")
+        if not isinstance(signals, list):
+            continue
+        by_name = {
+            str(signal.get("name")): signal.get("params", {})
+            for signal in signals
+            if isinstance(signal, dict) and isinstance(signal.get("params"), dict)
+        }
+        for flat_key in choices_by_key:
+            key_scope, predicate, param_name = flat_key.split(".", 2)
+            if key_scope != scope:
+                continue
+            signal_params = by_name.get(predicate, {})
+            if param_name in signal_params:
+                flattened[flat_key] = signal_params[param_name]
+    return flattened
+
+
+def _multi_signal_params_from_flat(
+    entry_shape: MultiSignalRuleShape,
+    exit_shape: MultiSignalRuleShape,
+    flat_params: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "entry_rule": _multi_signal_rule_from_flat("entry", entry_shape, flat_params),
+        "exit_rule": _multi_signal_rule_from_flat("exit", exit_shape, flat_params),
+    }
+
+
+def _multi_signal_rule_from_flat(
+    scope: str,
+    shape: MultiSignalRuleShape,
+    flat_params: dict[str, object],
+) -> dict[str, object]:
+    signals = []
+    for predicate in shape.predicates:
+        param_names = sorted({key for params in _MULTI_SIGNAL_PREDICATE_PARAM_GRIDS[predicate] for key in params})
+        signals.append(
+            {
+                "name": predicate,
+                "params": {
+                    param_name: flat_params[f"{scope}.{predicate}.{param_name}"]
+                    for param_name in param_names
+                    if f"{scope}.{predicate}.{param_name}" in flat_params
+                },
+            }
+        )
+    rule: dict[str, object] = {"combiner": shape.combiner, "signals": signals}
+    if shape.k is not None:
+        rule["k"] = shape.k
+    return rule
+
+
 def _completed_entries_by_family(entries: Sequence[LedgerEntry]) -> dict[str, tuple[LedgerEntry, ...]]:
     grouped: dict[str, list[LedgerEntry]] = {}
     for entry in entries:
@@ -571,6 +750,15 @@ def _completed_entries_by_family(entries: Sequence[LedgerEntry]) -> dict[str, tu
             continue
         grouped.setdefault(entry.spec.signal.name, []).append(entry)
     return {family: tuple(items) for family, items in grouped.items()}
+
+
+def _completed_multi_signal_entries_by_shape(entries: Sequence[LedgerEntry]) -> dict[str, tuple[LedgerEntry, ...]]:
+    grouped: dict[str, list[LedgerEntry]] = {}
+    for entry in entries:
+        if entry.status != "completed" or entry.spec.signal.name != "multi_signal":
+            continue
+        grouped.setdefault(strategy_shape_key(entry.spec), []).append(entry)
+    return {shape_key: tuple(items) for shape_key, items in grouped.items()}
 
 
 def _suggest_tpe_params(
@@ -593,6 +781,129 @@ def _suggest_tpe_params(
         suggestions = (*suggestions, *fallback)[:limit]
     _write_study_snapshot(signal_name, optuna_dir, history_entries, suggestions)
     return suggestions
+
+
+def _suggest_tpe_flat_params(
+    *,
+    study_label: str,
+    choices_by_key: dict[str, tuple[object, ...]],
+    history_entries: Sequence[LedgerEntry],
+    flatten_entry_params,
+    limit: int,
+    optuna_dir: Path,
+) -> tuple[dict[str, object], ...]:
+    optuna_dir.mkdir(parents=True, exist_ok=True)
+    suggestions = _optuna_library_flat_suggestions(
+        study_label=study_label,
+        choices_by_key=choices_by_key,
+        history_entries=history_entries,
+        flatten_entry_params=flatten_entry_params,
+        limit=limit,
+        optuna_dir=optuna_dir,
+    )
+    if len(suggestions) < limit:
+        existing = {_params_key(params) for params in suggestions}
+        fallback = tuple(
+            params
+            for params in _flat_neighbor_suggestions(choices_by_key, history_entries, flatten_entry_params, limit)
+            if _params_key(params) not in existing
+        )
+        suggestions = (*suggestions, *fallback)[:limit]
+    return suggestions
+
+
+def _optuna_library_flat_suggestions(
+    *,
+    study_label: str,
+    choices_by_key: dict[str, tuple[object, ...]],
+    history_entries: Sequence[LedgerEntry],
+    flatten_entry_params,
+    limit: int,
+    optuna_dir: Path,
+) -> tuple[dict[str, object], ...]:
+    try:
+        import optuna  # type: ignore[import-not-found]
+    except ModuleNotFoundError:
+        return ()
+    distributions = {
+        key: optuna.distributions.CategoricalDistribution(choices)
+        for key, choices in choices_by_key.items()
+    }
+    sampler = optuna.samplers.TPESampler(seed=_stable_seed(study_label), warn_independent_sampling=False)
+    study = optuna.create_study(
+        direction="maximize",
+        load_if_exists=True,
+        sampler=sampler,
+        storage=f"sqlite:///{optuna_dir / f'{study_label}.db'}",
+        study_name=f"{study_label}_return_pct",
+    )
+    history_params = {
+        entry.experiment_id: flatten_entry_params(entry)
+        for entry in history_entries
+    }
+    seen_history = {_params_key(params) for params in history_params.values()}
+    synced_experiment_ids = {
+        trial.user_attrs.get("ledger_experiment_id")
+        for trial in study.get_trials(deepcopy=False)
+        if trial.user_attrs.get("ledger_experiment_id") is not None
+    }
+    for entry in history_entries:
+        if entry.experiment_id in synced_experiment_ids:
+            continue
+        params = history_params[entry.experiment_id]
+        if not _params_match_distributions(params, distributions):
+            continue
+        study.add_trial(
+            optuna.trial.create_trial(
+                params=params,
+                distributions=distributions,
+                value=entry.metric("return_pct"),
+                user_attrs={"ledger_experiment_id": entry.experiment_id},
+            )
+        )
+    suggestions: list[dict[str, object]] = []
+    seen_suggestions = {
+        _params_key(trial.params)
+        for trial in study.get_trials(deepcopy=False)
+        if trial.params
+    }
+    attempts = max(limit * 8, 32)
+    for _ in range(attempts):
+        trial = study.ask(fixed_distributions=distributions)
+        params = dict(trial.params)
+        params_key = _params_key(params)
+        if params_key in seen_history or params_key in seen_suggestions:
+            study.tell(trial, state=optuna.trial.TrialState.FAIL)
+            continue
+        suggestions.append(params)
+        seen_suggestions.add(params_key)
+        if len(suggestions) >= limit:
+            break
+    return tuple(suggestions)
+
+
+def _flat_neighbor_suggestions(
+    choices_by_key: dict[str, tuple[object, ...]],
+    history_entries: Sequence[LedgerEntry],
+    flatten_entry_params,
+    limit: int,
+) -> tuple[dict[str, object], ...]:
+    if not history_entries:
+        return ()
+    best_entry = max(history_entries, key=lambda entry: entry.metric("return_pct"))
+    base_params = flatten_entry_params(best_entry)
+    seen_history = {_params_key(flatten_entry_params(entry)) for entry in history_entries}
+    suggestions: list[dict[str, object]] = []
+    for key in sorted(choices_by_key):
+        for choice in choices_by_key[key]:
+            params = {**base_params, key: choice}
+            params_key = _params_key(params)
+            if params_key in seen_history:
+                continue
+            suggestions.append(params)
+            if len(suggestions) >= limit:
+                return tuple(suggestions)
+    return tuple(suggestions)
 
 
 def _optuna_library_suggestions(
@@ -741,6 +1052,36 @@ def _write_study_snapshot(
         "pending_suggestions": [dict(sorted(params.items())) for params in suggestions],
     }
     path = optuna_dir / f"{signal_name}.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8")
+
+
+def _write_multi_signal_study_snapshot(
+    shape_key: str,
+    optuna_dir: Path,
+    history_entries: Sequence[LedgerEntry],
+    choices_by_key: dict[str, tuple[object, ...]],
+    suggestions: Sequence[dict[str, object]],
+) -> None:
+    payload = {
+        "signal_family": "multi_signal",
+        "search_space_version": MULTI_SIGNAL_SEARCH_SPACE_VERSION,
+        "shape_key": shape_key,
+        "sampler": "optuna_tpe",
+        "seed_evaluation_threshold": _OPTUNA_SEED_EVALUATION_THRESHOLD,
+        "objective": "return_pct",
+        "parameter_choices": {key: list(values) for key, values in sorted(choices_by_key.items())},
+        "completed_trials": [
+            {
+                "experiment_id": entry.experiment_id,
+                "spec_hash": entry.spec_hash,
+                "return_pct": entry.metric("return_pct"),
+                "params": _flatten_multi_signal_params(entry.spec.signal.params, choices_by_key),
+            }
+            for entry in history_entries
+        ],
+        "pending_suggestions": [dict(sorted(params.items())) for params in suggestions],
+    }
+    path = optuna_dir / f"multi_signal_{_stable_seed(shape_key):08x}.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8")
 
 

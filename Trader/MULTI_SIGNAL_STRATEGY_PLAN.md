@@ -328,7 +328,7 @@ the checklist in each commit.
 - [x] Generate only 3+ signal entry rules and 3+ signal exit rules.
 - [x] Add shape keys for UCB/search grouping.
 - [x] Add randomized restarts when candidate reuse gets too high.
-- [ ] Add Optuna/TPE support for tuning parameters inside a fixed rule shape.
+- [x] Add Optuna/TPE support for tuning parameters inside a fixed rule shape.
 - [ ] Disable 2-signal composite strategies in the active research loop.
 - [ ] Keep old `composite` tests as compatibility coverage.
 - [ ] Add planner tests proving active multi-signal candidates always satisfy

@@ -11,6 +11,7 @@ from trader.research.planner import (
     DeterministicPlanner,
     MultiSignalRuleShape,
     multi_signal_search_grammar,
+    strategy_shape_key,
 )
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import ExecConfig, SignalSpec, SizingSpec, StrategySpec
@@ -557,6 +558,32 @@ def test_planner_skips_optuna_seed_rows_outside_current_grid(tmp_path: Path, mon
     assert {trial.user_attrs["ledger_experiment_id"] for trial in added_trials} == {
         entry.experiment_id for entry in history[:-1]
     }
+
+
+def test_planner_tunes_multi_signal_optuna_inside_fixed_shape(tmp_path: Path) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    seed_plans = planner.plan(batch_size=10, allowed_signal_families=("multi_signal",))
+    seed_shape = strategy_shape_key(seed_plans[0].spec)
+    history = tuple(
+        _entry(f"multi_{index}", "multi_signal", seed_plans[index].spec.signal.params, return_pct=float(index))
+        for index in range(10)
+    )
+
+    planned = planner.plan(
+        batch_size=24,
+        allowed_signal_families=("multi_signal",),
+        history_entries=history,
+        optuna_dir=tmp_path,
+    )
+    optuna_plans = [item for item in planned if item.generator_kind == "optuna_tpe"]
+    payloads = [json.loads(path.read_text(encoding="utf-8")) for path in tmp_path.glob("multi_signal_*.json")]
+
+    assert optuna_plans
+    assert {strategy_shape_key(item.spec) for item in optuna_plans} == {seed_shape}
+    assert all(item.spec.signal.name == "multi_signal" for item in optuna_plans)
+    assert all(item.parent_experiment_ids == ("multi_9",) for item in optuna_plans)
+    assert any(payload["shape_key"] == seed_shape for payload in payloads)
+    assert any(len(payload["completed_trials"]) == 10 for payload in payloads)
 
 
 def _entry(
