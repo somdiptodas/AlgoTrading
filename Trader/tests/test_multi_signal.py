@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trader.data.models import MarketBar
+from trader.data.view import DataView
+from trader.evaluation.runner import EvaluationRunner
 from trader.strategies.decisions import SignalVote
 from trader.strategies.registry import REGISTRY
 from trader.strategies.signals import multi_signal
@@ -411,3 +413,36 @@ def test_multi_signal_decisions_do_not_change_prefix_when_future_bars_change() -
         decisions = REGISTRY.generate_decisions(spec, history, tuple(altered))
 
         assert decisions[: prefix_end + 1] == baseline[: prefix_end + 1]
+
+
+def test_evaluation_runner_routes_multi_signal_through_decision_engine(seeded_store) -> None:
+    runner = EvaluationRunner(DataView(seeded_store.database_path), REGISTRY)
+    spec = StrategySpec(
+        name="runner_multi_signal",
+        signal=SignalSpec(
+            "multi_signal",
+            {
+                "entry_rule": {
+                    "combiner": "any",
+                    "signals": [
+                        {"name": "rsi_below", "params": {"length": 3, "threshold": 60.0}},
+                        {"name": "vwap_distance", "params": {"side": "below", "min_bps": 1.0}},
+                        {"name": "relative_volume", "params": {"lookback": 3, "min_ratio": 0.5}},
+                    ],
+                },
+                "exit_rule": {
+                    "combiner": "any",
+                    "signals": [
+                        {"name": "rsi_above", "params": {"length": 3, "threshold": 40.0}},
+                        {"name": "vwap_reclaimed", "params": {"min_bps": 0.0}},
+                        {"name": "ema_trend_down", "params": {"fast": 2, "slow": 4}},
+                    ],
+                },
+            },
+        ),
+    )
+
+    result = runner.evaluate_single_window(spec)
+
+    assert result.bars
+    assert len(result.equity_curve) == len(result.bars)

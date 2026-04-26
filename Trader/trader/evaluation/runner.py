@@ -31,11 +31,12 @@ from trader.evaluation.metrics import (
 from trader.evaluation.promotion import promotion_stage
 from trader.evaluation.robustness import RobustnessResult, assess_robustness
 from trader.evaluation.splits import Fold, build_walk_forward_folds
-from trader.execution.engine import BacktestResult, run_long_only_engine
+from trader.execution.engine import BacktestResult, run_long_only_decision_engine, run_long_only_engine
 from trader.features.pipeline import FeatureCache, feature_cache_context
+from trader.strategies.decisions import TradeDecision
 from trader.strategies.registry import StrategyRegistry
 from trader.strategies.filters.regime import generate_reporting_regime_labels
-from trader.strategies.spec import StrategySpec
+from trader.strategies.spec import ExecConfig, StrategySpec
 
 DEFAULT_LOCKED_HOLDOUT_MONTHS = 3
 _HOLDOUT_STAGES = {"candidate"}
@@ -120,9 +121,9 @@ class EvaluationRunner:
         )
         if len(data_slice.bars) <= self.registry.required_history(validated) + 1:
             raise RuntimeError("Not enough bars for the selected strategy lookback")
-        regime = self.registry.generate_regime(validated, tuple(), data_slice.bars)
         sizing_fraction = self.registry.compute_sizing_fraction(validated)
-        return run_long_only_engine(data_slice.bars, regime, validated.exec_config, sizing_fraction)
+        signal_state = self._generate_signal_state(validated, tuple(), data_slice.bars)
+        return self._run_signal_state_backtest(data_slice.bars, signal_state, validated.exec_config, sizing_fraction)
 
     def evaluate_walk_forward(
         self,
@@ -393,9 +394,9 @@ class EvaluationRunner:
         train_bars = tuple(bars[fold.train_start_idx : fold.train_end_idx + 1])
         test_bars = tuple(bars[fold.test_start_idx : fold.test_end_idx + 1])
         warnings = self._quality_warnings(spec, test_bars)
-        regime = self._generate_fold_regime(spec, fold, train_bars, test_bars, data_snapshot_id=data_snapshot_id)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
-        result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
+        signal_state = self._generate_fold_signal_state(spec, fold, train_bars, test_bars, data_snapshot_id=data_snapshot_id)
+        result = self._run_signal_state_backtest(test_bars, signal_state, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
         metrics.update(self._regime_conditional_metrics(train_bars, test_bars, result))
         metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
@@ -450,9 +451,9 @@ class EvaluationRunner:
         train_bars = tuple(bars[fold.train_start_idx : fold.train_end_idx + 1])
         test_bars = tuple(bars[fold.test_start_idx : fold.test_end_idx + 1])
         warnings = self._quality_warnings(spec, test_bars)
-        regime = self._generate_fold_regime(spec, fold, train_bars, test_bars, data_snapshot_id=data_snapshot_id)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
-        result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
+        signal_state = self._generate_fold_signal_state(spec, fold, train_bars, test_bars, data_snapshot_id=data_snapshot_id)
+        result = self._run_signal_state_backtest(test_bars, signal_state, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
         metrics.update(self._regime_conditional_metrics(train_bars, test_bars, result))
         metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
@@ -514,6 +515,51 @@ class EvaluationRunner:
         )
         with feature_cache_context(self._indicator_cache, scope):
             return self.registry.generate_regime(spec, train_bars, test_bars)
+
+    def _generate_fold_signal_state(
+        self,
+        spec: StrategySpec,
+        fold: Fold,
+        train_bars: tuple[MarketBar, ...],
+        test_bars: tuple[MarketBar, ...],
+        *,
+        data_snapshot_id: str | None = None,
+    ) -> tuple[bool, ...] | tuple[TradeDecision, ...]:
+        if not hasattr(self, "_indicator_cache"):
+            self._indicator_cache = {}
+        scope = (
+            data_snapshot_id,
+            fold.fold_id,
+            fold.train_start_utc,
+            fold.train_end_utc,
+            fold.test_start_utc,
+            fold.test_end_utc,
+            len(train_bars),
+            len(test_bars),
+        )
+        with feature_cache_context(self._indicator_cache, scope):
+            return self._generate_signal_state(spec, train_bars, test_bars)
+
+    def _generate_signal_state(
+        self,
+        spec: StrategySpec,
+        history_bars: tuple[MarketBar, ...],
+        test_bars: tuple[MarketBar, ...],
+    ) -> tuple[bool, ...] | tuple[TradeDecision, ...]:
+        if spec.signal.name == "multi_signal":
+            return tuple(self.registry.generate_decisions(spec, history_bars, test_bars))
+        return tuple(self.registry.generate_regime(spec, history_bars, test_bars))
+
+    def _run_signal_state_backtest(
+        self,
+        bars: tuple[MarketBar, ...],
+        signal_state: Sequence[bool] | Sequence[TradeDecision],
+        exec_config: ExecConfig,
+        sizing_fraction: float,
+    ) -> BacktestResult:
+        if signal_state and isinstance(signal_state[0], TradeDecision):
+            return run_long_only_decision_engine(bars, signal_state, exec_config, sizing_fraction)  # type: ignore[arg-type]
+        return run_long_only_engine(bars, signal_state, exec_config, sizing_fraction)  # type: ignore[arg-type]
 
     def _evaluate_baselines(
         self,
@@ -583,10 +629,10 @@ class EvaluationRunner:
     ) -> FoldResult:
         train_bars = tuple(bars[fold.train_start_idx : fold.train_end_idx + 1])
         test_bars = tuple(bars[fold.test_start_idx : fold.test_end_idx + 1])
-        regime = self._generate_fold_regime(spec, fold, train_bars, test_bars, data_snapshot_id=data_snapshot_id)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
+        signal_state = self._generate_fold_signal_state(spec, fold, train_bars, test_bars, data_snapshot_id=data_snapshot_id)
         metrics = dict(fold_result.metrics)
-        metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
+        metrics.update(self._cost_scenario_metrics(spec, test_bars, signal_state, sizing_fraction, metrics))
         return replace(fold_result, metrics=metrics)
 
     def _evaluate_holdout(self, spec: StrategySpec, preview: EvaluationPreview) -> FoldResult:
@@ -605,9 +651,9 @@ class EvaluationRunner:
             len(test_bars),
         )
         with feature_cache_context(self._indicator_cache, scope):
-            regime = self.registry.generate_regime(spec, train_bars, test_bars)
+            signal_state = self._generate_signal_state(spec, train_bars, test_bars)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
-        result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
+        result = self._run_signal_state_backtest(test_bars, signal_state, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
         metrics.update(self._regime_conditional_metrics(train_bars, test_bars, result))
         metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
@@ -645,7 +691,7 @@ class EvaluationRunner:
         self,
         spec: StrategySpec,
         bars: tuple[MarketBar, ...],
-        regime: Sequence[bool],
+        signal_state: Sequence[bool] | Sequence[TradeDecision],
         sizing_fraction: float,
         metrics: dict[str, float],
     ) -> dict[str, float]:
@@ -660,13 +706,13 @@ class EvaluationRunner:
         slippage_stress = replace(base_config, slippage_bps=base_config.slippage_bps + 2.0)
         spread_stress = replace(base_config, spread_bps=base_config.spread_bps + 2.0)
         zero_return = calculate_metrics(
-            run_long_only_engine(bars, regime, zero_cost, sizing_fraction)
+            self._run_signal_state_backtest(bars, signal_state, zero_cost, sizing_fraction)
         )["return_pct"]
         slippage_return = calculate_metrics(
-            run_long_only_engine(bars, regime, slippage_stress, sizing_fraction)
+            self._run_signal_state_backtest(bars, signal_state, slippage_stress, sizing_fraction)
         )["return_pct"]
         spread_return = calculate_metrics(
-            run_long_only_engine(bars, regime, spread_stress, sizing_fraction)
+            self._run_signal_state_backtest(bars, signal_state, spread_stress, sizing_fraction)
         )["return_pct"]
         base_return = metrics["return_pct"]
         return {
