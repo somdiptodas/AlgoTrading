@@ -12,7 +12,7 @@ from trader.ledger.entry import LedgerEntry
 from trader.ledger.store import LedgerStore
 from trader.research.candidates import DeterministicCandidateQueue
 from trader.research.critic_memory import CriticRegionMemory
-from trader.research.planner import PlannedSpec
+from trader.research.planner import DeterministicPlanner, PlannedSpec, strategy_shape_key
 from trader.research.suppressor import SuppressedSpec
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import FilterSpec, SignalSpec, StrategySpec
@@ -513,3 +513,34 @@ def test_candidate_queue_applies_region_critic_memory_before_family_fallback(tmp
     )
 
     assert queue_result.selected[0].preview.spec.name == "ema_far"
+
+
+def test_candidate_queue_ucb_groups_multi_signal_candidates_by_shape(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    planner = DeterministicPlanner(REGISTRY)
+    planned = planner.plan(batch_size=20, allowed_signal_families=("multi_signal",))
+    explored = planned[0]
+    explored_shape = strategy_shape_key(explored.spec)
+    unexplored = next(item for item in planned if strategy_shape_key(item.spec) != explored_shape)
+    queue = DeterministicCandidateQueue(
+        history_entries=(
+            _entry("shape_1", explored.spec, return_pct=1.0),
+            _entry("shape_2", explored.spec, return_pct=1.0),
+            _entry("shape_3", explored.spec, return_pct=1.0),
+        ),
+        frontier_entries=(),
+    )
+
+    queue_result = queue.build(
+        planned_specs=(PlannedSpec(explored.spec, generator_kind="multi_signal_grid"), unexplored),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+        max_preview_count=1,
+    )
+
+    assert queue_result.previewed_count == 1
+    assert queue_result.selected[0].family == "multi_signal"
+    assert queue_result.selected[0].shape_key == strategy_shape_key(unexplored.spec)

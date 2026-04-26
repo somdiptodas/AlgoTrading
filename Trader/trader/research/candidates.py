@@ -9,7 +9,7 @@ from trader.evaluation.runner import EvaluationPreview, EvaluationRunner
 from trader.ledger.entry import LedgerEntry
 from trader.research.critic import planning_penalty_from_critique
 from trader.research.critic_memory import CriticRegionMemory
-from trader.research.planner import PlannedSpec
+from trader.research.planner import PlannedSpec, strategy_shape_key
 from trader.research.suppressor import RegionSuppressor, SuppressedSpec, spec_distance
 from trader.strategies.spec import StrategySpec
 
@@ -24,6 +24,7 @@ class ScoredCandidate:
     planned: PlannedSpec
     preview: EvaluationPreview
     family: str
+    shape_key: str
     static_score: float
     novelty_to_history: float
     parent_score: float
@@ -51,11 +52,11 @@ class DeterministicCandidateQueue:
         self.frontier_entries = tuple(frontier_entries)
         self.critic_memory = critic_memory
         self.suppressor = suppressor
-        self._history_by_family = self._group_by_family(self.history_entries)
+        self._history_by_shape = self._group_by_shape(self.history_entries)
         self._frontier_by_id = {entry.experiment_id: entry for entry in self.frontier_entries}
-        self._family_counts = {family: len(entries) for family, entries in self._history_by_family.items()}
-        self._critic_penalty_by_family = {
-            family: self._family_critic_penalty(entries) for family, entries in self._history_by_family.items()
+        self._shape_counts = {shape_key: len(entries) for shape_key, entries in self._history_by_shape.items()}
+        self._critic_penalty_by_shape = {
+            shape_key: self._shape_critic_penalty(entries) for shape_key, entries in self._history_by_shape.items()
         }
         self._historical_eval_keys = {entry.evaluation_key for entry in self.history_entries}
 
@@ -115,6 +116,7 @@ class DeterministicCandidateQueue:
             previewed_count += 1
             started = perf_counter()
             family = preview.spec.signal.name
+            shape_key = strategy_shape_key(preview.spec)
             novelty = self._novelty_to_history(preview)
             parent_score = self._parent_score(planned)
             # Suppressor: compute penalty and collect audit record before scoring.
@@ -131,6 +133,7 @@ class DeterministicCandidateQueue:
                     planned=planned,
                     preview=preview,
                     family=family,
+                    shape_key=shape_key,
                     static_score=static_score,
                     novelty_to_history=novelty,
                     parent_score=parent_score,
@@ -155,56 +158,56 @@ class DeterministicCandidateQueue:
     ) -> tuple[PlannedSpec, ...]:
         grouped: dict[str, list[tuple[PlannedSpec, float]]] = {}
         for planned in planned_specs:
-            family = self._planned_family(planned, runner)
-            grouped.setdefault(family, []).append((planned, self._cheap_score(planned, runner)))
-        family_order = {family: index for index, family in enumerate(sorted(grouped))}
-        selected_counts_by_family: dict[str, int] = {}
+            shape_key = self._planned_shape_key(planned, runner)
+            grouped.setdefault(shape_key, []).append((planned, self._cheap_score(planned, runner)))
+        shape_order = {shape_key: index for index, shape_key in enumerate(sorted(grouped))}
+        selected_counts_by_shape: dict[str, int] = {}
         ranked: list[PlannedSpec] = []
         while any(grouped.values()):
-            best_family: str | None = None
+            best_shape: str | None = None
             best_index = 0
             best_score: float | None = None
-            for family, family_plans in grouped.items():
-                if not family_plans:
+            for shape_key, shape_plans in grouped.items():
+                if not shape_plans:
                     continue
-                base_family_score = self._family_ucb_score(family)
-                virtual_family_score = self._family_ucb_score(
-                    family,
-                    selected_count=selected_counts_by_family.get(family, 0),
+                base_shape_score = self._shape_ucb_score(shape_key)
+                virtual_shape_score = self._shape_ucb_score(
+                    shape_key,
+                    selected_count=selected_counts_by_shape.get(shape_key, 0),
                     total_selected_count=len(ranked),
                 )
-                for index, (planned, static_score) in enumerate(family_plans):
-                    total_score = static_score - base_family_score + virtual_family_score
+                for index, (planned, static_score) in enumerate(shape_plans):
+                    total_score = static_score - base_shape_score + virtual_shape_score
                     if (
                         best_score is None
                         or total_score > best_score
                         or (
                             total_score == best_score
                             and (
-                                family_order[family],
+                                shape_order[shape_key],
                                 planned.spec.spec_hash(),
                             )
                             < (
-                                family_order[best_family or family],
-                                grouped[best_family or family][best_index][0].spec.spec_hash(),
+                                shape_order[best_shape or shape_key],
+                                grouped[best_shape or shape_key][best_index][0].spec.spec_hash(),
                             )
                         )
                     ):
                         best_score = total_score
-                        best_family = family
+                        best_shape = shape_key
                         best_index = index
-            if best_family is None:
+            if best_shape is None:
                 break
-            planned, _ = grouped[best_family].pop(best_index)
+            planned, _ = grouped[best_shape].pop(best_index)
             ranked.append(planned)
-            selected_counts_by_family[best_family] = selected_counts_by_family.get(best_family, 0) + 1
+            selected_counts_by_shape[best_shape] = selected_counts_by_shape.get(best_shape, 0) + 1
         return tuple(ranked)
 
-    def _planned_family(self, planned: PlannedSpec, runner: EvaluationRunner) -> str:
+    def _planned_shape_key(self, planned: PlannedSpec, runner: EvaluationRunner) -> str:
         try:
-            return runner.registry.validate_spec(planned.spec).signal.name
+            return strategy_shape_key(runner.registry.validate_spec(planned.spec))
         except ValueError:
-            return planned.spec.signal.name
+            return strategy_shape_key(planned.spec)
 
     def _cheap_score(self, planned: PlannedSpec, runner: EvaluationRunner) -> float:
         try:
@@ -216,7 +219,7 @@ class DeterministicCandidateQueue:
         simplicity_boost = max(0.0, 20.0 - (required_history / 10.0))
         return (
             generator_boost
-            + self._family_ucb_score(spec.signal.name)
+            + self._shape_ucb_score(strategy_shape_key(spec))
             + (self._parent_score(planned) * 0.25)
             + (self._novelty_to_history_spec(spec) * 10.0)
             + simplicity_boost
@@ -226,9 +229,9 @@ class DeterministicCandidateQueue:
     def _select_candidates(self, candidates: Sequence[ScoredCandidate]) -> tuple[ScoredCandidate, ...]:
         grouped: dict[str, list[ScoredCandidate]] = {}
         for candidate in candidates:
-            grouped.setdefault(candidate.family, []).append(candidate)
-        for family in grouped:
-            grouped[family].sort(
+            grouped.setdefault(candidate.shape_key, []).append(candidate)
+        for shape_key in grouped:
+            grouped[shape_key].sort(
                 key=lambda candidate: (
                     candidate.static_score,
                     candidate.novelty_to_history,
@@ -238,40 +241,40 @@ class DeterministicCandidateQueue:
             )
 
         selected: list[ScoredCandidate] = []
-        selected_specs_by_family: dict[str, list[ScoredCandidate]] = {}
-        selected_counts_by_family: dict[str, int] = {}
-        family_order = {family: index for index, family in enumerate(sorted(grouped))}
+        selected_specs_by_shape: dict[str, list[ScoredCandidate]] = {}
+        selected_counts_by_shape: dict[str, int] = {}
+        shape_order = {shape_key: index for index, shape_key in enumerate(sorted(grouped))}
 
         while any(grouped.values()):
-            best_family: str | None = None
+            best_shape: str | None = None
             best_index = 0
             best_score: float | None = None
-            for family, family_candidates in grouped.items():
-                if not family_candidates:
+            for shape_key, shape_candidates in grouped.items():
+                if not shape_candidates:
                     continue
-                base_family_score = self._family_ucb_score(family)
-                virtual_family_score = self._family_ucb_score(
-                    family,
-                    selected_count=selected_counts_by_family.get(family, 0),
+                base_shape_score = self._shape_ucb_score(shape_key)
+                virtual_shape_score = self._shape_ucb_score(
+                    shape_key,
+                    selected_count=selected_counts_by_shape.get(shape_key, 0),
                     total_selected_count=len(selected),
                 )
-                for index, candidate in enumerate(family_candidates):
-                    diversity_bonus = self._diversity_bonus(candidate, selected_specs_by_family.get(family, ()))
-                    total_score = candidate.static_score - base_family_score + virtual_family_score + diversity_bonus
+                for index, candidate in enumerate(shape_candidates):
+                    diversity_bonus = self._diversity_bonus(candidate, selected_specs_by_shape.get(shape_key, ()))
+                    total_score = candidate.static_score - base_shape_score + virtual_shape_score + diversity_bonus
                     if (
                         best_score is None
                         or total_score > best_score
-                        or (total_score == best_score and family_order[family] < family_order[best_family or family])
+                        or (total_score == best_score and shape_order[shape_key] < shape_order[best_shape or shape_key])
                     ):
                         best_score = total_score
-                        best_family = family
+                        best_shape = shape_key
                         best_index = index
-            if best_family is None:
+            if best_shape is None:
                 break
-            chosen = grouped[best_family].pop(best_index)
+            chosen = grouped[best_shape].pop(best_index)
             selected.append(chosen)
-            selected_specs_by_family.setdefault(best_family, []).append(chosen)
-            selected_counts_by_family[best_family] = selected_counts_by_family.get(best_family, 0) + 1
+            selected_specs_by_shape.setdefault(best_shape, []).append(chosen)
+            selected_counts_by_shape[best_shape] = selected_counts_by_shape.get(best_shape, 0) + 1
         return tuple(selected)
 
     def _static_score(
@@ -287,7 +290,7 @@ class DeterministicCandidateQueue:
         suppression_penalty = suppression_record.suppression_weight if suppression_record is not None else 0.0
         return (
             generator_boost
-            + self._family_ucb_score(preview.spec.signal.name)
+            + self._shape_ucb_score(strategy_shape_key(preview.spec))
             + (parent_score * 0.25)
             + (novelty * 10.0)
             + simplicity_boost
@@ -295,9 +298,9 @@ class DeterministicCandidateQueue:
             - self._critic_penalty(preview.spec)
         )
 
-    def _family_ucb_score(self, family: str, *, selected_count: int = 0, total_selected_count: int = 0) -> float:
-        entries = self._history_by_family.get(family, ())
-        history_count = self._family_counts.get(family, 0)
+    def _shape_ucb_score(self, shape_key: str, *, selected_count: int = 0, total_selected_count: int = 0) -> float:
+        entries = self._history_by_shape.get(shape_key, ())
+        history_count = self._shape_counts.get(shape_key, 0)
         effective_count = history_count + selected_count
         if effective_count == 0:
             return _UNEXPLORED_FAMILY_UCB_SCORE
@@ -322,7 +325,7 @@ class DeterministicCandidateQueue:
         return max(scores, default=0.0)
 
     @staticmethod
-    def _family_critic_penalty(entries: Sequence[LedgerEntry]) -> float:
+    def _shape_critic_penalty(entries: Sequence[LedgerEntry]) -> float:
         penalties = []
         for entry in entries:
             penalties.append(planning_penalty_from_critique(entry.critique))
@@ -333,18 +336,18 @@ class DeterministicCandidateQueue:
     def _critic_penalty(self, spec: StrategySpec) -> float:
         if self.critic_memory is not None and self.critic_memory.record_count > 0:
             return self.critic_memory.penalty(spec)
-        return self._critic_penalty_by_family.get(spec.signal.name, 0.0)
+        return self._critic_penalty_by_shape.get(strategy_shape_key(spec), 0.0)
 
     def _novelty_to_history(self, preview: EvaluationPreview) -> float:
         return self._novelty_to_history_spec(preview.spec)
 
     def _novelty_to_history_spec(self, spec: StrategySpec) -> float:
-        family_entries = self._history_by_family.get(spec.signal.name, ())
-        if not family_entries:
+        shape_entries = self._history_by_shape.get(strategy_shape_key(spec), ())
+        if not shape_entries:
             return 1.0
         distances = [
             self._spec_distance(spec.to_payload(include_name=False), entry.spec.to_payload(include_name=False))
-            for entry in family_entries
+            for entry in shape_entries
         ]
         return min(distances) if distances else 1.0
 
@@ -365,11 +368,11 @@ class DeterministicCandidateQueue:
         return min(distances, default=0.0) * 20.0
 
     @staticmethod
-    def _group_by_family(entries: Iterable[LedgerEntry]) -> dict[str, tuple[LedgerEntry, ...]]:
+    def _group_by_shape(entries: Iterable[LedgerEntry]) -> dict[str, tuple[LedgerEntry, ...]]:
         grouped: dict[str, list[LedgerEntry]] = {}
         for entry in entries:
-            grouped.setdefault(entry.spec.signal.name, []).append(entry)
-        return {family: tuple(items) for family, items in grouped.items()}
+            grouped.setdefault(strategy_shape_key(entry.spec), []).append(entry)
+        return {shape_key: tuple(items) for shape_key, items in grouped.items()}
 
     @staticmethod
     def _spec_distance(left: dict[str, object], right: dict[str, object]) -> float:

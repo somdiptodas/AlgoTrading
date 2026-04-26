@@ -162,6 +162,44 @@ def multi_signal_search_grammar() -> MultiSignalSearchGrammar:
     return _MULTI_SIGNAL_GRAMMAR
 
 
+def strategy_shape_key(spec: StrategySpec) -> str:
+    if spec.signal.name == "multi_signal":
+        params = spec.signal.params
+        entry_key = _multi_signal_rule_shape_key("entry", params.get("entry_rule"))
+        exit_key = _multi_signal_rule_shape_key("exit", params.get("exit_rule"))
+        if entry_key is not None and exit_key is not None:
+            return f"{entry_key}|{exit_key}"
+    if spec.signal.name == "composite":
+        children = spec.signal.params.get("children")
+        if isinstance(children, list):
+            child_names = sorted(
+                str(child.get("name", ""))
+                for child in children
+                if isinstance(child, dict) and child.get("name")
+            )
+            if child_names:
+                return f"composite:{spec.signal.params.get('combiner', 'all')}:{'+'.join(child_names)}"
+    return spec.signal.name
+
+
+def _multi_signal_rule_shape_key(scope: str, rule: object) -> str | None:
+    if not isinstance(rule, dict):
+        return None
+    signals = rule.get("signals")
+    if not isinstance(signals, list):
+        return None
+    names = sorted(
+        str(signal.get("name", ""))
+        for signal in signals
+        if isinstance(signal, dict) and signal.get("name")
+    )
+    if len(names) < 3:
+        return None
+    combiner = str(rule.get("combiner", "all"))
+    k_part = f":k={int(rule['k'])}" if combiner == "k_of_n" and "k" in rule else ""
+    return f"{scope}:{combiner}{k_part}:{'+'.join(names)}"
+
+
 @dataclass(frozen=True)
 class _CompositeRecipe:
     name: str

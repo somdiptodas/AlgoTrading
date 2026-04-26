@@ -23,7 +23,7 @@ from trader.research.critic import HeuristicCritic
 from trader.research.critic_memory import CriticRegionMemory
 from trader.research.frontier import FrontierManager
 from trader.research.generator import StrategyGenerator
-from trader.research.planner import DeterministicPlanner
+from trader.research.planner import DeterministicPlanner, strategy_shape_key
 from trader.research.suppressor import RegionSuppressor, SuppressedSpec, WithinRunStageAFailureMemory
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import StrategySpec
@@ -238,7 +238,7 @@ def _loop_experiment_summary(
         "family": result.spec.signal.name,
         "promotion_stage": result.promotion_stage,
         "generator_kind": generator_kind,
-        "shape_key": result.spec.signal.name,
+        "shape_key": strategy_shape_key(result.spec),
         "aggregate_metrics": dict(result.aggregate_metrics),
         "artifact_paths": dict(artifact_paths),
     }
