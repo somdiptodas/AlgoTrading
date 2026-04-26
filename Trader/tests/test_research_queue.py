@@ -11,6 +11,7 @@ from trader.evaluation.runner import EvaluationRunner
 from trader.ledger.entry import LedgerEntry
 from trader.ledger.store import LedgerStore
 from trader.research.candidates import DeterministicCandidateQueue
+from trader.research.critic_memory import CriticRegionMemory
 from trader.research.planner import PlannedSpec
 from trader.research.suppressor import SuppressedSpec
 from trader.strategies.registry import REGISTRY
@@ -476,3 +477,39 @@ def test_candidate_queue_applies_critic_planning_penalties(tmp_path: Path) -> No
     )
 
     assert queue_result.selected[0].family == "breakout"
+
+
+def test_candidate_queue_applies_region_critic_memory_before_family_fallback(tmp_path: Path) -> None:
+    db_path = tmp_path / "market.db"
+    _seed_db(db_path)
+    runner = EvaluationRunner(DataView(db_path), REGISTRY)
+    failed_region = _spec("ema_history", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0})
+    penalized_entry = _entry(
+        "penalized_ema",
+        failed_region,
+        return_pct=1.0,
+        critique={"planning_penalties": {"benchmark_failure": 25.0}},
+    )
+    queue = DeterministicCandidateQueue(
+        history_entries=(penalized_entry,),
+        frontier_entries=(),
+        critic_memory=CriticRegionMemory.from_entries((penalized_entry,)),
+    )
+
+    queue_result = queue.build(
+        planned_specs=(
+            PlannedSpec(
+                _spec("ema_near", "ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+                generator_kind="grid",
+            ),
+            PlannedSpec(
+                _spec("ema_far", "ema_cross", {"fast_length": 34, "slow_length": 144, "signal_buffer_bps": 3.0}),
+                generator_kind="grid",
+            ),
+        ),
+        runner=runner,
+        num_folds=3,
+        embargo_bars=1,
+    )
+
+    assert queue_result.selected[0].preview.spec.name == "ema_far"

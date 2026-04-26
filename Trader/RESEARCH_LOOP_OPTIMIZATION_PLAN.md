@@ -325,7 +325,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
 
 ### P2 — better selection signal & reuse across runs
 
-- [ ] **Persist per-region critic memory** to disk so the next loop's planner can avoid bad regions across processes (today's `_critic_penalty_by_family` is only family-level).
+- [x] **Persist per-region critic memory** to disk so the next loop's planner can avoid bad regions across processes (today's `_critic_penalty_by_family` is only family-level).
+  - Completed: 2026-04-25
+  - Implementation: Added persistent `critic_memory.json` with deterministic per-region records derived from completed critique planning penalties, load/seed/rewrite wiring in the loop, and candidate-queue scoring that uses region penalties before falling back to family-level critic penalties when no memory exists.
+  - Verification: focused critic-memory/queue/loop tests passed (`.venv/bin/pytest -q tests/test_critic_memory.py tests/test_research_queue.py tests/test_loop_cmd.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found and then re-checked the startup-load blocker with no blockers remaining.
 - [ ] **Within-run failure memory** (rev 1 P2 carryover): after first 2 stage-A failures from a region, suppress remaining stage-B from that region in the *same* loop.
 - [ ] **Holdout p-value** (V5) and direction-match gate before `candidate` promotion.
 - [ ] **Regime-conditional return reporting** (V4).

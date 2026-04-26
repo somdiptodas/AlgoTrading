@@ -13,10 +13,12 @@ from trader.config import load_settings
 from trader.data.view import DataView
 from trader.evaluation.runner import DEFAULT_LOCKED_HOLDOUT_MONTHS, EvaluationPreview, EvaluationRunner, ExperimentResult
 from trader.ledger.entry import json_dumps
+from trader.ledger.entry import LedgerEntry
 from trader.ledger.store import LedgerStore
 from trader.reporting.report import render_experiment_report
 from trader.research.candidates import DeterministicCandidateQueue, ScoredCandidate
 from trader.research.critic import HeuristicCritic
+from trader.research.critic_memory import CriticRegionMemory
 from trader.research.frontier import FrontierManager
 from trader.research.generator import StrategyGenerator
 from trader.research.planner import DeterministicPlanner
@@ -122,6 +124,14 @@ def _timing_payload(timings: dict[str, float]) -> dict[str, float]:
     return {phase: round(timings.get(phase, 0.0), 6) for phase in TIMING_PHASES}
 
 
+def _load_or_seed_critic_memory(path: Path, history_entries: Sequence[LedgerEntry]) -> CriticRegionMemory:
+    if path.exists():
+        return CriticRegionMemory.load(path, registry=REGISTRY)
+    memory = CriticRegionMemory.from_entries(history_entries, registry=REGISTRY)
+    memory.write(path)
+    return memory
+
+
 def _stage_b_worker_count(candidate_count: int) -> int:
     if candidate_count <= 0:
         return 0
@@ -169,6 +179,8 @@ def main(argv: list[str] | None = None) -> None:
     loop_run_id = _loop_run_id(args)
 
     history_entries = ledger.list_completed(limit=10_000)
+    critic_memory_path = settings.research_dir / "critic_memory.json"
+    critic_memory = _load_or_seed_critic_memory(critic_memory_path, history_entries)
     frontier_entries = ledger.query.promoted_experiments(history_entries, limit=args.frontier_limit)
 
     # --- Build suppressor from history entries that failed robustness gates ---
@@ -198,6 +210,7 @@ def main(argv: list[str] | None = None) -> None:
     candidate_queue = DeterministicCandidateQueue(
         history_entries=history_entries,
         frontier_entries=frontier_entries,
+        critic_memory=critic_memory,
         suppressor=suppressor,
     )
     queue_result = candidate_queue.build(
@@ -249,6 +262,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     _add_timing(timings, "ledger_write", started)
     suppression_summary = ledger.suppression_summary(loop_run_id) if suppression_logged > 0 else {}
+    CriticRegionMemory.from_entries(ledger.list_completed(limit=10_000), registry=REGISTRY).write(critic_memory_path)
 
     frontier = frontier_manager.rank([entry.to_result() for entry in ledger.top_experiments(limit=args.frontier_limit)])
     print(json_dumps(

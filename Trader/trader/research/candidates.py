@@ -8,6 +8,7 @@ from typing import Iterable, Sequence
 from trader.evaluation.runner import EvaluationPreview, EvaluationRunner
 from trader.ledger.entry import LedgerEntry
 from trader.research.critic import planning_penalty_from_critique
+from trader.research.critic_memory import CriticRegionMemory
 from trader.research.planner import PlannedSpec
 from trader.research.suppressor import RegionSuppressor, SuppressedSpec, spec_distance
 from trader.strategies.spec import StrategySpec
@@ -43,16 +44,18 @@ class DeterministicCandidateQueue:
         *,
         history_entries: Sequence[LedgerEntry],
         frontier_entries: Sequence[LedgerEntry],
+        critic_memory: CriticRegionMemory | None = None,
         suppressor: RegionSuppressor | None = None,
     ) -> None:
         self.history_entries = tuple(entry for entry in history_entries if entry.status == "completed")
         self.frontier_entries = tuple(frontier_entries)
+        self.critic_memory = critic_memory
         self.suppressor = suppressor
         self._history_by_family = self._group_by_family(self.history_entries)
         self._frontier_by_id = {entry.experiment_id: entry for entry in self.frontier_entries}
         self._family_counts = {family: len(entries) for family, entries in self._history_by_family.items()}
         self._critic_penalty_by_family = {
-            family: self._critic_penalty(entries) for family, entries in self._history_by_family.items()
+            family: self._family_critic_penalty(entries) for family, entries in self._history_by_family.items()
         }
         self._historical_eval_keys = {entry.evaluation_key for entry in self.history_entries}
 
@@ -217,7 +220,7 @@ class DeterministicCandidateQueue:
             + (self._parent_score(planned) * 0.25)
             + (self._novelty_to_history_spec(spec) * 10.0)
             + simplicity_boost
-            - self._critic_penalty_by_family.get(spec.signal.name, 0.0)
+            - self._critic_penalty(spec)
         )
 
     def _select_candidates(self, candidates: Sequence[ScoredCandidate]) -> tuple[ScoredCandidate, ...]:
@@ -289,7 +292,7 @@ class DeterministicCandidateQueue:
             + (novelty * 10.0)
             + simplicity_boost
             - suppression_penalty
-            - self._critic_penalty_by_family.get(preview.spec.signal.name, 0.0)
+            - self._critic_penalty(preview.spec)
         )
 
     def _family_ucb_score(self, family: str, *, selected_count: int = 0, total_selected_count: int = 0) -> float:
@@ -319,13 +322,18 @@ class DeterministicCandidateQueue:
         return max(scores, default=0.0)
 
     @staticmethod
-    def _critic_penalty(entries: Sequence[LedgerEntry]) -> float:
+    def _family_critic_penalty(entries: Sequence[LedgerEntry]) -> float:
         penalties = []
         for entry in entries:
             penalties.append(planning_penalty_from_critique(entry.critique))
         if not penalties:
             return 0.0
         return min(sum(penalties) / len(penalties), 25.0)
+
+    def _critic_penalty(self, spec: StrategySpec) -> float:
+        if self.critic_memory is not None and self.critic_memory.record_count > 0:
+            return self.critic_memory.penalty(spec)
+        return self._critic_penalty_by_family.get(spec.signal.name, 0.0)
 
     def _novelty_to_history(self, preview: EvaluationPreview) -> float:
         return self._novelty_to_history_spec(preview.spec)

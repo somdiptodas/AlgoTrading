@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES
 from trader.cli.loop_cmd import _add_timing, _max_preview_count, _new_timings, _planned_spec_count, _suppression_audit_types, _timing_payload
-from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _stage_b_worker_count, build_parser
+from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _load_or_seed_critic_memory, _stage_b_worker_count, build_parser
 from trader.research.suppressor import SuppressedSpec
 
 
@@ -128,3 +128,54 @@ def test_evaluate_candidate_worker_reopens_database_path(monkeypatch) -> None:
     assert seen["database_path"] == Path("/tmp/market.db")
     assert seen["preview"] == "preview"
     assert seen["include_robustness"] is True
+
+
+def test_load_or_seed_critic_memory_consumes_existing_disk_file(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+    path = tmp_path / "critic_memory.json"
+    path.write_text("{}", encoding="utf-8")
+
+    class FakeMemory:
+        @classmethod
+        def load(cls, memory_path, *, registry):
+            calls.append(("load", memory_path))
+            return "loaded"
+
+        @classmethod
+        def from_entries(cls, history_entries, *, registry):
+            calls.append(("from_entries", tuple(history_entries)))
+            return cls()
+
+        def write(self, memory_path) -> None:
+            calls.append(("write", memory_path))
+
+    monkeypatch.setattr("trader.cli.loop_cmd.CriticRegionMemory", FakeMemory)
+
+    assert _load_or_seed_critic_memory(path, ("history",)) == "loaded"
+    assert calls == [("load", path)]
+
+
+def test_load_or_seed_critic_memory_seeds_missing_disk_file(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+    path = tmp_path / "critic_memory.json"
+
+    class FakeMemory:
+        @classmethod
+        def load(cls, memory_path, *, registry):
+            calls.append(("load", memory_path))
+            return "loaded"
+
+        @classmethod
+        def from_entries(cls, history_entries, *, registry):
+            calls.append(("from_entries", tuple(history_entries)))
+            return cls()
+
+        def write(self, memory_path) -> None:
+            calls.append(("write", memory_path))
+
+    monkeypatch.setattr("trader.cli.loop_cmd.CriticRegionMemory", FakeMemory)
+
+    memory = _load_or_seed_critic_memory(path, ("history",))
+
+    assert isinstance(memory, FakeMemory)
+    assert calls == [("from_entries", ("history",)), ("write", path)]
