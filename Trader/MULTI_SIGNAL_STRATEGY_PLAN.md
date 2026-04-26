@@ -278,7 +278,7 @@ the checklist in each commit.
 ### Phase 4: Engine Integration
 
 - [x] Add a decision-based execution path to the engine.
-- [ ] While flat, schedule entry from `entry_rule.passed`.
+- [x] While flat, schedule entry from `entry_rule.passed`.
 - [ ] While long, schedule exit from `exit_rule.passed`.
 - [ ] Preserve hard exits:
   - [ ] stop loss
