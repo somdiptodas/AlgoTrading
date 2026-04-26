@@ -341,7 +341,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: Added reporting-only online-safe trend/chop/high-vol/low-vol labels, per-session compounded return/day-count metrics by regime, fold/holdout wiring, aggregate compounding across folds, and report labels/formatting for the new metrics.
   - Verification: focused metrics/regime/runner/report tests passed (`.venv/bin/pytest -q tests/test_splits_metrics_registry.py tests/test_regime_filters.py tests/test_robustness.py tests/test_ledger.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers in the V4 implementation and confirmed unrelated follow-up/data working-tree changes should stay out of this commit.
-- [ ] **Top-N trade concentration check** (V6) added to robustness.
+- [x] **Top-N trade concentration check** (V6) added to robustness.
+  - Completed: 2026-04-25
+  - Implementation: Added a fail-closed top-3 positive trade PnL concentration robustness gate, promotion requirement, report fields, and suppressor weighting for nearby failures.
+  - Verification: focused robustness/promotion/suppressor/report/cost tests passed (`.venv/bin/pytest -q tests/test_robustness.py tests/test_promotion.py tests/test_suppressor.py tests/test_ledger.py tests/test_costs.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers in the V6 implementation and confirmed unrelated follow-up/data working-tree changes should stay out of this commit.
 - [ ] **Snapshot subhash cache in `_split_research_and_holdout`** (S3) so research/holdout snapshot IDs aren't re-hashed per spec.
 - [ ] **Reduce neighbor count to 3** with median + bootstrap CI (S7).
 

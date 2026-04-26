@@ -79,6 +79,17 @@ def test_suppressor_weights_failure_types() -> None:
         radius=0.2,
         weight_cap=40.0,
     )
+    top_trade = RegionSuppressor(
+        (
+            _failure(
+                "top_trade_failure",
+                spec,
+                {"top_trade_concentration_pass": False, "fold_consistency_pass": True},
+            ),
+        ),
+        radius=0.2,
+        weight_cap=40.0,
+    )
     drawdown = RegionSuppressor(
         (
             _failure(
@@ -92,6 +103,7 @@ def test_suppressor_weights_failure_types() -> None:
     )
 
     assert neighborhood.suppression_weight(spec) > drawdown.suppression_weight(spec)
+    assert top_trade.suppression_weight(spec) > drawdown.suppression_weight(spec)
 
 
 def test_large_suppression_requires_repeated_nearby_failures() -> None:

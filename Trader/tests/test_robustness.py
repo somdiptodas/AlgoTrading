@@ -196,6 +196,48 @@ def test_regime_pass_fails_without_positive_monthly_pnl() -> None:
     assert checks["regime_pass"] is False
 
 
+def test_top_trade_concentration_allows_inclusive_fifty_percent() -> None:
+    checks = _checks_for(
+        (
+            _trade("2026-01-15T20:00:00+00:00", 10.0),
+            _trade("2026-01-15T20:00:00+00:00", 10.0),
+            _trade("2026-01-15T20:00:00+00:00", 10.0),
+            _trade("2026-01-15T20:00:00+00:00", 10.0),
+            _trade("2026-01-15T20:00:00+00:00", 10.0),
+            _trade("2026-01-15T20:00:00+00:00", 10.0),
+        )
+    )
+
+    assert checks["top_3_trade_pnl_concentration_pct"] == 50.0
+    assert checks["positive_trade_pnl_count"] == 6.0
+    assert checks["top_trade_concentration_pass"] is True
+
+
+def test_top_trade_concentration_fails_above_fifty_percent() -> None:
+    checks = _checks_for(
+        (
+            _trade("2026-01-15T20:00:00+00:00", 17.0),
+            _trade("2026-01-15T20:00:00+00:00", 17.0),
+            _trade("2026-01-15T20:00:00+00:00", 17.0),
+            _trade("2026-01-15T20:00:00+00:00", 17.0),
+            _trade("2026-01-15T20:00:00+00:00", 16.0),
+            _trade("2026-01-15T20:00:00+00:00", 16.0),
+        )
+    )
+
+    assert checks["top_3_trade_pnl_concentration_pct"] == 51.0
+    assert checks["positive_trade_pnl_count"] == 6.0
+    assert checks["top_trade_concentration_pass"] is False
+
+
+def test_top_trade_concentration_fails_closed_without_positive_trades() -> None:
+    checks = _checks_for((_trade("2026-01-15T20:00:00+00:00", -10.0),))
+
+    assert checks["top_3_trade_pnl_concentration_pct"] == 100.0
+    assert checks["positive_trade_pnl_count"] == 0.0
+    assert checks["top_trade_concentration_pass"] is False
+
+
 def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypatch) -> None:
     runner = EvaluationRunner.__new__(EvaluationRunner)
     runner.registry = REGISTRY
@@ -255,6 +297,7 @@ def test_evaluate_preview_aggregates_neighbor_metrics_across_all_folds(monkeypat
             checks={
                 "fold_consistency_pass": True,
                 "regime_pass": True,
+                "top_trade_concentration_pass": True,
                 "neighborhood_pass": True,
                 "drawdown_pass": True,
             },
@@ -464,6 +507,7 @@ def test_evaluate_preview_runs_stage_b_when_stage_a_passes(monkeypatch) -> None:
             checks={
                 "fold_consistency_pass": True,
                 "regime_pass": True,
+                "top_trade_concentration_pass": True,
                 "neighborhood_pass": True,
                 "drawdown_pass": True,
             },
@@ -532,6 +576,7 @@ def test_evaluate_preview_can_skip_stage_a_prescreen(monkeypatch) -> None:
             checks={
                 "fold_consistency_pass": True,
                 "regime_pass": True,
+                "top_trade_concentration_pass": True,
                 "neighborhood_pass": True,
                 "drawdown_pass": True,
             },

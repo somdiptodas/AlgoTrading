@@ -13,6 +13,8 @@ from trader.strategies.spec import StrategySpec
 
 
 MONTHLY_PNL_CONCENTRATION_LIMIT_PCT = 80.0
+TOP_TRADE_CONCENTRATION_COUNT = 3
+TOP_TRADE_CONCENTRATION_LIMIT_PCT = 50.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,11 @@ def assess_robustness(
     monthly_concentration = max(positive_monthly_concentration, loss_monthly_concentration)
     positive_pnl_present = any(value > 0 for value in monthly_pnl.values())
     regime_pass = positive_pnl_present and monthly_concentration <= MONTHLY_PNL_CONCENTRATION_LIMIT_PCT
+    top_trade_concentration, positive_trade_pnl_count = _top_trade_pnl_concentration(
+        fold_backtests,
+        top_n=TOP_TRADE_CONCENTRATION_COUNT,
+    )
+    top_trade_concentration_pass = top_trade_concentration <= TOP_TRADE_CONCENTRATION_LIMIT_PCT
     neighborhood_returns: list[float] = []
     neighborhood_sharpes: list[float] = []
     for neighbor_spec in registry.neighbors(spec)[:6]:
@@ -71,6 +78,9 @@ def assess_robustness(
         "positive_monthly_pnl_present": positive_pnl_present,
         "monthly_pnl_month_count": float(len(monthly_pnl)),
         "regime_pass": regime_pass,
+        "top_3_trade_pnl_concentration_pct": top_trade_concentration,
+        "positive_trade_pnl_count": float(positive_trade_pnl_count),
+        "top_trade_concentration_pass": top_trade_concentration_pass,
         "neighborhood_median_return_pct": neighborhood_return_median,
         "neighborhood_gap_pct": neighborhood_return_gap,  # kept for backward compat
         "neighborhood_return_gap_pct": neighborhood_return_gap,
@@ -79,7 +89,13 @@ def assess_robustness(
         "neighborhood_pass": neighborhood_pass,
         "drawdown_pass": aggregate_metrics.get("max_drawdown_pct", 100.0) <= 20.0,
     }
-    passed = bool(checks["fold_consistency_pass"] and checks["regime_pass"] and checks["neighborhood_pass"] and checks["drawdown_pass"])
+    passed = bool(
+        checks["fold_consistency_pass"]
+        and checks["regime_pass"]
+        and checks["top_trade_concentration_pass"]
+        and checks["neighborhood_pass"]
+        and checks["drawdown_pass"]
+    )
     return RobustnessResult(checks=checks, passed=passed)
 
 
@@ -104,3 +120,19 @@ def _monthly_concentration_pct(monthly_values: Iterable[float], *, no_positive_v
     if total <= 0:
         return no_positive_value
     return (max(values) / total) * 100.0
+
+
+def _top_trade_pnl_concentration(backtests: Sequence[BacktestResult], *, top_n: int) -> tuple[float, int]:
+    positive_pnl = sorted(
+        (
+            trade.pnl_cash
+            for backtest in backtests
+            for trade in backtest.trades
+            if trade.pnl_cash > 0.0
+        ),
+        reverse=True,
+    )
+    total = sum(positive_pnl)
+    if total <= 0.0:
+        return 100.0, 0
+    return (sum(positive_pnl[:top_n]) / total) * 100.0, len(positive_pnl)

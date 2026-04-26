@@ -7,6 +7,7 @@ MAX_P_VALUE_VS_RANDOM_ENTRY = 0.10
 _REQUIRED_ROBUSTNESS_CHECKS = (
     "fold_consistency_pass",
     "regime_pass",
+    "top_trade_concentration_pass",
     "neighborhood_pass",
     "drawdown_pass",
 )

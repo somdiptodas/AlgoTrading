@@ -445,6 +445,24 @@ def test_report_renders_regime_conditional_returns() -> None:
     assert "Trend regime days: 2" in report
 
 
+def test_report_renders_top_trade_concentration_check() -> None:
+    base = _sample_result()
+    result = replace(
+        base,
+        robustness_checks={
+            **base.robustness_checks,
+            "top_trade_concentration_pass": False,
+            "top_3_trade_pnl_concentration_pct": 51.0,
+            "positive_trade_pnl_count": 6.0,
+        },
+    )
+    report = render_experiment_report(result)
+
+    assert "Top trade concentration pass: no" in report
+    assert "Top 3 trade PnL concentration: 51.00%" in report
+    assert "Positive trade PnL count: 6" in report
+
+
 def test_top_experiments_ranks_from_scalar_columns_before_deserializing_winners(
     tmp_path: Path,
     monkeypatch,

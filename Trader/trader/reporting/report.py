@@ -80,6 +80,9 @@ _ROBUSTNESS_ORDER = (
     "loss_monthly_pnl_concentration_pct",
     "positive_monthly_pnl_present",
     "monthly_pnl_month_count",
+    "top_trade_concentration_pass",
+    "top_3_trade_pnl_concentration_pct",
+    "positive_trade_pnl_count",
     "neighborhood_pass",
     "neighborhood_gap_pct",
     "neighborhood_median_return_pct",
@@ -137,6 +140,9 @@ _METRIC_LABELS = {
     "loss_monthly_pnl_concentration_pct": "Loss monthly PnL concentration",
     "positive_monthly_pnl_present": "Positive monthly PnL present",
     "monthly_pnl_month_count": "Monthly PnL months",
+    "top_trade_concentration_pass": "Top trade concentration pass",
+    "top_3_trade_pnl_concentration_pct": "Top 3 trade PnL concentration",
+    "positive_trade_pnl_count": "Positive trade PnL count",
     "neighborhood_pass": "Neighborhood pass",
     "neighborhood_gap_pct": "Neighborhood gap",
     "neighborhood_median_return_pct": "Neighborhood median return",
@@ -448,7 +454,7 @@ def _label_for_metric(name: str) -> str:
 def _format_metric_value(name: str, value: float | bool) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
-    if name == "trade_count" or name.endswith("_day_count"):
+    if name in {"trade_count", "positive_trade_pnl_count"} or name.endswith("_day_count"):
         return f"{int(round(value)):,}"
     if name.endswith("_pct"):
         signed = name in _SIGNED_PERCENT_METRICS

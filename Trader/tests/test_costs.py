@@ -404,6 +404,7 @@ def test_evaluate_preview_adds_cost_stress_after_base_gates_pass(monkeypatch) ->
             checks={
                 "fold_consistency_pass": True,
                 "regime_pass": True,
+                "top_trade_concentration_pass": True,
                 "neighborhood_pass": True,
                 "drawdown_pass": True,
             },

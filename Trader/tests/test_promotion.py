@@ -32,6 +32,7 @@ def _robustness(**overrides: bool) -> dict[str, bool]:
     checks = {
         "fold_consistency_pass": True,
         "regime_pass": True,
+        "top_trade_concentration_pass": True,
         "neighborhood_pass": True,
         "drawdown_pass": True,
     }
@@ -66,6 +67,7 @@ def test_edge_failures_stay_exploratory(metric_overrides: dict[str, float]) -> N
     (
         {"fold_consistency_pass": False},
         {"regime_pass": False},
+        {"top_trade_concentration_pass": False},
         {"neighborhood_pass": False},
         {"drawdown_pass": False},
     ),

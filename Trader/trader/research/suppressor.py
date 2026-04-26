@@ -107,11 +107,13 @@ _ROBUSTNESS_GATE_CHECKS = (
     "neighborhood_pass",
     "drawdown_pass",
     "regime_pass",
+    "top_trade_concentration_pass",
 )
 _FAILURE_CHECK_WEIGHTS = {
     "neighborhood_pass": 1.0,
     "fold_consistency_pass": 0.75,
     "regime_pass": 0.6,
+    "top_trade_concentration_pass": 0.6,
     "drawdown_pass": 0.5,
 }
 _LARGE_SUPPRESSION_FAILURE_COUNT = 2
