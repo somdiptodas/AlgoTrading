@@ -234,7 +234,7 @@ the checklist in each commit.
 
 - [ ] Add immutable decision dataclasses:
   - [x] `SignalVote`
-  - [ ] `RuleDecision`
+  - [x] `RuleDecision`
   - [ ] `TradeDecision`
 - [ ] Add JSON serialization helpers for decision traces.
 - [ ] Add unit tests for serialization and backward compatibility.
