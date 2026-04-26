@@ -285,7 +285,7 @@ the checklist in each commit.
   - [x] session close
   - [x] final bar
 - [x] Preserve one-position-at-a-time behavior.
-- [ ] Store entry decision details on the open position.
+- [x] Store entry decision details on the open position.
 - [ ] Copy entry and exit decision details into each completed trade.
 - [ ] Keep the old regime-based engine path available for legacy strategies.
 - [ ] Add focused tests for entry/exit asymmetry and reason persistence.

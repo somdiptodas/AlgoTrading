@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from trader.data.models import MarketBar
 from trader.execution.position import Position
+from trader.strategies.decisions import RuleDecision
 from trader.strategies.spec import ExecConfig
 
 
@@ -28,6 +29,7 @@ def enter_long(
     exec_config: ExecConfig,
     sizing_fraction: float = 1.0,
     reason: str = "signal_on",
+    entry_rule: RuleDecision | None = None,
 ) -> tuple[float, Position | None]:
     entry_bps = exec_config.slippage_bps + (exec_config.spread_bps / 2.0)
     fill_price = bar.open * (1.0 + entry_bps / 10_000.0)
@@ -50,6 +52,7 @@ def enter_long(
         entry_commission=commission,
         entry_cost_cash=((fill_price - bar.open) * max_shares) + commission,
         entry_reason=reason,
+        entry_rule=entry_rule,
     )
     return new_cash, position
 

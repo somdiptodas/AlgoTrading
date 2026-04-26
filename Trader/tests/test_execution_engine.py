@@ -7,7 +7,8 @@ import pytest
 
 from trader.data.models import MarketBar
 from trader.execution.engine import run_long_only_decision_engine
-from trader.strategies.decisions import RuleDecision, TradeDecision
+from trader.execution.fills import enter_long
+from trader.strategies.decisions import RuleDecision, SignalVote, TradeDecision
 from trader.strategies.spec import ExecConfig
 
 
@@ -159,3 +160,18 @@ def test_decision_engine_preserves_one_open_position_behavior() -> None:
     assert len(result.trades) == 1
     assert result.trades[0].entry_timestamp_utc == bars[1].timestamp_utc
     assert result.trades[0].exit_timestamp_utc == bars[-1].timestamp_utc
+
+
+def test_enter_long_stores_entry_decision_on_position() -> None:
+    entry_rule = RuleDecision(True, "entry_vote_passed", (SignalVote("entry_a", True, "ok"),))
+
+    _, position = enter_long(
+        100_000.0,
+        _bar(0, 100.0),
+        ExecConfig(initial_cash=100_000.0, slippage_bps=0.0),
+        reason=entry_rule.reason,
+        entry_rule=entry_rule,
+    )
+
+    assert position is not None
+    assert position.entry_rule == entry_rule
