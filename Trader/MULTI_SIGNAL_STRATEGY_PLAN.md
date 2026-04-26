@@ -340,7 +340,7 @@ the checklist in each commit.
       artifacts, and planner generation.
 - [x] Run the full test suite.
 - [x] Reset stale local research artifacts before measuring new loop behavior.
-- [ ] Run a small smoke batch of multi-signal-only experiments.
+- [x] Run a small smoke batch of multi-signal-only experiments.
 - [ ] Inspect generated run dashboard, one run report, and trade visualizations
       for at least one winning and one losing strategy.
 - [ ] Run 10 loop iterations with `multi_signal` only.
