@@ -188,3 +188,18 @@ def test_vwap_reclaimed_predicate_votes_when_price_is_back_above_vwap() -> None:
     votes = PREDICATES.generate_votes("vwap_reclaimed", (), test, {"min_bps": 5.0})
 
     assert votes == [SignalVote("vwap_reclaimed", True, "close 100.10 >= VWAP reclaim 100.05")]
+
+
+def test_relative_volume_predicate_votes_when_current_volume_exceeds_prior_average() -> None:
+    history = (_bar(0, 100.0, volume=1_000.0), _bar(1, 100.0, volume=1_000.0))
+    test = (_bar(2, 100.0, volume=2_000.0),)
+
+    assert PREDICATES.validate_params("relative_volume", {"lookback": 2, "min_ratio": "1.5"}) == {
+        "lookback": 2,
+        "min_ratio": 1.5,
+        "max_ratio": 100.0,
+    }
+    assert PREDICATES.required_history("relative_volume", {"lookback": 2}) == 2
+    votes = PREDICATES.generate_votes("relative_volume", history, test, {"lookback": 2, "min_ratio": 1.5})
+
+    assert votes == [SignalVote("relative_volume", True, "relative volume 2.00 in [1.50, 100.00]")]
