@@ -284,7 +284,7 @@ the checklist in each commit.
   - [x] stop loss
   - [x] session close
   - [x] final bar
-- [ ] Preserve one-position-at-a-time behavior.
+- [x] Preserve one-position-at-a-time behavior.
 - [ ] Store entry decision details on the open position.
 - [ ] Copy entry and exit decision details into each completed trade.
 - [ ] Keep the old regime-based engine path available for legacy strategies.

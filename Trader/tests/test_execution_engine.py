@@ -148,3 +148,14 @@ def test_decision_engine_preserves_final_bar_exit() -> None:
     assert len(result.trades) == 1
     assert result.trades[0].exit_timestamp_utc == bars[-1].timestamp_utc
     assert result.trades[0].exit_reason == "final_bar"
+
+
+def test_decision_engine_preserves_one_open_position_behavior() -> None:
+    bars = tuple(_bar(index, 100.0) for index in range(5))
+    decisions = tuple(_decision(True, False) for _ in bars)
+
+    result = run_long_only_decision_engine(bars, decisions, ExecConfig(initial_cash=100_000.0, slippage_bps=0.0))
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_timestamp_utc == bars[1].timestamp_utc
+    assert result.trades[0].exit_timestamp_utc == bars[-1].timestamp_utc
