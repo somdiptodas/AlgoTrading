@@ -331,6 +331,24 @@ class WithinRunStageAFailureMemory:
             suppression_weight=self.weight_cap,
         )
 
+    def would_reach_failure_threshold_if_failed(self, spec: StrategySpec) -> bool:
+        return self._failure_count_in_radius(spec) >= _WITHIN_RUN_STAGE_A_FAILURE_THRESHOLD - 1
+
+    def _failure_count_in_radius(self, spec: StrategySpec) -> int:
+        candidate_payload = spec.to_payload(include_name=False)
+        count = 0
+        for failure in self._failures:
+            if failure.spec.signal.name != spec.signal.name:
+                continue
+            dist = spec_distance(
+                candidate_payload,
+                failure.spec.to_payload(include_name=False),
+                parameter_scales=self._parameter_scales_by_family.get(spec.signal.name),
+            )
+            if dist < self.radius:
+                count += 1
+        return count
+
 
 def _failure_weight(failed_check_names: Sequence[str]) -> float:
     if not failed_check_names:

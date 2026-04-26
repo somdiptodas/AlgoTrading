@@ -56,6 +56,7 @@ def _multi_signal_params() -> dict[str, object]:
 class _FakePredicates:
     def __init__(self, votes: dict[str, list[bool]]) -> None:
         self.votes = votes
+        self.calls: list[tuple[str, dict[str, object]]] = []
 
     def validate_params(self, name: str, params: dict[str, object]) -> dict[str, object]:
         if name not in self.votes:
@@ -69,6 +70,7 @@ class _FakePredicates:
         test_bars: tuple[MarketBar, ...],
         params: dict[str, object],
     ) -> list[SignalVote]:
+        self.calls.append((name, dict(params)))
         return [
             SignalVote(name, passed, f"{name} vote {index}")
             for index, passed in enumerate(self.votes[name][: len(test_bars)])
@@ -282,6 +284,97 @@ def test_multi_signal_supports_asymmetric_entry_and_exit_rules(monkeypatch: pyte
     assert [decision.exit.passed for decision in decisions] == [False, True, True]
     assert [vote.name for vote in decisions[0].entry.votes] == ["entry_a", "entry_b", "entry_c"]
     assert [vote.name for vote in decisions[0].exit.votes] == ["exit_a", "exit_b", "exit_c"]
+
+
+def test_multi_signal_vote_cache_reuses_identical_predicate_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakePredicates(
+        {
+            "shared": [True, True, False],
+            "entry_b": [True, False, False],
+            "entry_c": [True, True, True],
+            "exit_b": [False, True, False],
+            "exit_c": [False, False, True],
+        }
+    )
+    monkeypatch.setattr(multi_signal, "PREDICATES", fake)
+    bars = tuple(_bar(index, 100.0 + index) for index in range(3))
+    spec = StrategySpec(
+        name="multi_signal_vote_cache",
+        signal=SignalSpec(
+            "multi_signal",
+            {
+                "entry_rule": {
+                    "combiner": "all",
+                    "signals": [
+                        {"name": "shared", "params": {"threshold": 1}},
+                        {"name": "entry_b", "params": {}},
+                        {"name": "entry_c", "params": {}},
+                    ],
+                },
+                "exit_rule": {
+                    "combiner": "any",
+                    "signals": [
+                        {"name": "shared", "params": {"threshold": 1}},
+                        {"name": "exit_b", "params": {}},
+                        {"name": "exit_c", "params": {}},
+                    ],
+                },
+            },
+        ),
+    )
+
+    with multi_signal.predicate_vote_cache_context({}, ("snapshot", 0)):
+        decisions = REGISTRY.generate_decisions(spec, tuple(), bars)
+
+    assert len(decisions) == 3
+    assert fake.calls.count(("shared", {"threshold": 1})) == 1
+
+
+def test_multi_signal_vote_cache_keeps_params_and_scope_separate(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakePredicates(
+        {
+            "shared": [True, True],
+            "entry_b": [True, True],
+            "entry_c": [True, True],
+            "exit_b": [False, False],
+            "exit_c": [False, False],
+        }
+    )
+    monkeypatch.setattr(multi_signal, "PREDICATES", fake)
+    bars = tuple(_bar(index, 100.0 + index) for index in range(2))
+    spec = StrategySpec(
+        name="multi_signal_vote_cache_scope",
+        signal=SignalSpec(
+            "multi_signal",
+            {
+                "entry_rule": {
+                    "combiner": "all",
+                    "signals": [
+                        {"name": "shared", "params": {"threshold": 1}},
+                        {"name": "entry_b", "params": {}},
+                        {"name": "entry_c", "params": {}},
+                    ],
+                },
+                "exit_rule": {
+                    "combiner": "any",
+                    "signals": [
+                        {"name": "shared", "params": {"threshold": 2}},
+                        {"name": "exit_b", "params": {}},
+                        {"name": "exit_c", "params": {}},
+                    ],
+                },
+            },
+        ),
+    )
+    cache: dict[tuple[object, ...], tuple[SignalVote, ...]] = {}
+
+    with multi_signal.predicate_vote_cache_context(cache, ("snapshot", 0)):
+        REGISTRY.generate_decisions(spec, tuple(), bars)
+    with multi_signal.predicate_vote_cache_context(cache, ("snapshot", 1)):
+        REGISTRY.generate_decisions(spec, tuple(), bars)
+
+    assert fake.calls.count(("shared", {"threshold": 1})) == 2
+    assert fake.calls.count(("shared", {"threshold": 2})) == 2
 
 
 def test_multi_signal_canonicalizes_child_order_for_stable_hashing() -> None:

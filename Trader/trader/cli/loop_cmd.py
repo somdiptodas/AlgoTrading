@@ -46,6 +46,8 @@ TIMING_PHASES = (
     "artifact_write",
     "ledger_write",
 )
+SEARCH_EXHAUSTION_SELECTED_FRACTION = 0.5
+STAGE_A_PARALLEL_CHUNK_SIZE = 2
 
 
 @dataclass(frozen=True)
@@ -173,32 +175,16 @@ def _active_data_snapshot_id(
 
 def _current_snapshot_entries(
     entries: Sequence[LedgerEntry],
-    runner: EvaluationRunner,
     *,
-    num_folds: int,
-    embargo_bars: int,
-    locked_holdout_months: int | None,
+    active_data_snapshot_id: str,
 ) -> tuple[LedgerEntry, ...]:
-    current: list[LedgerEntry] = []
-    for entry in entries:
-        try:
-            preview = runner.preview_walk_forward(
-                entry.spec,
-                num_folds=num_folds,
-                embargo_bars=embargo_bars,
-                locked_holdout_months=locked_holdout_months,
-            )
-        except Exception:
-            continue
-        if entry.data_snapshot_id == preview.data_slice.snapshot_id:
-            current.append(entry)
-    return tuple(current)
+    return tuple(entry for entry in entries if entry.data_snapshot_id == active_data_snapshot_id)
 
 
 def _stage_b_worker_count(candidate_count: int) -> int:
     if candidate_count <= 0:
         return 0
-    return min(8, max(4, candidate_count))
+    return min(8, candidate_count)
 
 
 def _evaluate_candidate_worker(payload: tuple[str, EvaluationPreview]) -> tuple[ExperimentResult, dict[str, float]]:
@@ -206,6 +192,14 @@ def _evaluate_candidate_worker(payload: tuple[str, EvaluationPreview]) -> tuple[
     runner = EvaluationRunner(DataView(Path(database_path)), REGISTRY)
     result = runner.evaluate_preview(preview, include_robustness=True, run_stage_a=False)
     return result, dict(runner.phase_timings)
+
+
+def _evaluate_stage_a_candidate_worker(payload: tuple[str, EvaluationPreview]) -> tuple[ExperimentResult | None, dict[str, float]]:
+    database_path, preview = payload
+    runner = EvaluationRunner(DataView(Path(database_path)), REGISTRY)
+    started = perf_counter()
+    result = runner.evaluate_stage_a_preview(preview)
+    return result, {"stage_a": perf_counter() - started}
 
 
 def _evaluate_selected_candidates(
@@ -218,8 +212,11 @@ def _evaluate_selected_candidates(
     if worker_count == 0:
         return tuple(), {}
     payloads = tuple((database_path, candidate.preview) for candidate in selected_candidates)
-    with executor_factory(max_workers=worker_count) as executor:
-        outputs = tuple(executor.map(_evaluate_candidate_worker, payloads))
+    if worker_count == 1:
+        outputs = (_evaluate_candidate_worker(payloads[0]),)
+    else:
+        with executor_factory(max_workers=worker_count) as executor:
+            outputs = tuple(executor.map(_evaluate_candidate_worker, payloads))
     timings: dict[str, float] = {}
     for _, worker_timings in outputs:
         for phase in ("stage_a", "stage_b", "robustness_neighbors"):
@@ -264,31 +261,72 @@ def _prescreen_stage_a_candidates(
     runner: EvaluationRunner,
     *,
     suppressor_radius: float,
+    database_path: str | None = None,
+    executor_factory: Callable[..., object] = ProcessPoolExecutor,
 ) -> StageAPrescreenResult:
     memory = WithinRunStageAFailureMemory(radius=suppressor_radius)
     stage_b_candidates: list[ScoredCandidate] = []
     completed_results: list[tuple[ScoredCandidate, ExperimentResult]] = []
     suppression_records: list[SuppressedSpec] = []
     timings = {"stage_a": 0.0}
-    for candidate in selected_candidates:
-        suppression_record = memory.assess(candidate.preview.spec)
-        if suppression_record is not None:
-            suppression_records.append(suppression_record)
+    candidate_index = 0
+    while candidate_index < len(selected_candidates):
+        evaluation_batch: list[ScoredCandidate] = []
+        while candidate_index < len(selected_candidates) and len(evaluation_batch) < STAGE_A_PARALLEL_CHUNK_SIZE:
+            candidate = selected_candidates[candidate_index]
+            candidate_index += 1
+            suppression_record = memory.assess(candidate.preview.spec)
+            if suppression_record is not None:
+                suppression_records.append(suppression_record)
+                continue
+            evaluation_batch.append(candidate)
+            if memory.would_reach_failure_threshold_if_failed(candidate.preview.spec):
+                break
+        if not evaluation_batch:
             continue
-        started = perf_counter()
-        stage_a_result = runner.evaluate_stage_a_preview(candidate.preview)
-        _add_timing(timings, "stage_a", started)
-        if stage_a_result is not None:
-            completed_results.append((candidate, stage_a_result))
-            memory.record(stage_a_result)
+        outputs: tuple[tuple[ExperimentResult | None, dict[str, float]], ...]
+        if database_path is not None and len(evaluation_batch) > 1:
+            payloads = tuple((database_path, candidate.preview) for candidate in evaluation_batch)
+            with executor_factory(max_workers=len(payloads)) as executor:
+                outputs = tuple(executor.map(_evaluate_stage_a_candidate_worker, payloads))
         else:
-            stage_b_candidates.append(candidate)
+            batch_outputs = []
+            for candidate in evaluation_batch:
+                started = perf_counter()
+                stage_a_result = runner.evaluate_stage_a_preview(candidate.preview)
+                batch_outputs.append((stage_a_result, {"stage_a": perf_counter() - started}))
+            outputs = tuple(batch_outputs)
+        for candidate, (stage_a_result, worker_timings) in zip(evaluation_batch, outputs):
+            timings["stage_a"] += worker_timings.get("stage_a", 0.0)
+            if stage_a_result is not None:
+                completed_results.append((candidate, stage_a_result))
+                memory.record(stage_a_result)
+            else:
+                stage_b_candidates.append(candidate)
     return StageAPrescreenResult(
         stage_b_candidates=tuple(stage_b_candidates),
         completed_results=tuple(completed_results),
         suppression_records=tuple(suppression_records),
         timings=timings,
     )
+
+
+def _search_exhaustion_status(queue_result: CandidateQueueResult, *, batch_size: int) -> dict[str, object]:
+    selected_count = len(queue_result.selected)
+    if selected_count == 0 and queue_result.duplicate_count > 0:
+        return {
+            "exhausted": True,
+            "reason": "no_unique_candidates",
+        }
+    if selected_count < batch_size and selected_count <= max(1, int(batch_size * SEARCH_EXHAUSTION_SELECTED_FRACTION)):
+        return {
+            "exhausted": True,
+            "reason": "low_unique_candidate_yield",
+        }
+    return {
+        "exhausted": False,
+        "reason": "",
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -314,10 +352,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     history_entries = _current_snapshot_entries(
         all_history_entries,
-        runner,
-        num_folds=args.folds,
-        embargo_bars=args.embargo_bars,
-        locked_holdout_months=args.holdout_months,
+        active_data_snapshot_id=active_data_snapshot_id,
     )
     critic_memory_path = settings.research_dir / f"critic_memory_{active_data_snapshot_id[:12]}.json"
     critic_memory = _load_or_seed_critic_memory(critic_memory_path, history_entries)
@@ -384,10 +419,12 @@ def main(argv: list[str] | None = None) -> None:
     completed_experiments = []
     reused = queue_result.duplicate_count
     selected_candidates = queue_result.selected[: args.batch_size]
+    search_exhaustion = _search_exhaustion_status(queue_result, batch_size=args.batch_size)
     prescreen = _prescreen_stage_a_candidates(
         selected_candidates,
         runner,
         suppressor_radius=args.suppressor_radius,
+        database_path=str(settings.database_path),
     )
     timings["stage_a"] += prescreen.timings.get("stage_a", 0.0)
     results, worker_timings = _evaluate_selected_candidates(prescreen.stage_b_candidates, str(settings.database_path))
@@ -456,10 +493,7 @@ def main(argv: list[str] | None = None) -> None:
     suppression_summary = ledger.suppression_summary(loop_run_id) if suppression_logged > 0 else {}
     fresh_history_entries = _current_snapshot_entries(
         ledger.list_completed(limit=10_000),
-        runner,
-        num_folds=args.folds,
-        embargo_bars=args.embargo_bars,
-        locked_holdout_months=args.holdout_months,
+        active_data_snapshot_id=active_data_snapshot_id,
     )
     CriticRegionMemory.from_entries(fresh_history_entries, registry=REGISTRY).write(critic_memory_path)
 
@@ -480,6 +514,7 @@ def main(argv: list[str] | None = None) -> None:
         "completed": len(completed),
         "reused": reused,
         "planner_restarts": planner_restarts,
+        "search_exhaustion": search_exhaustion,
         "counts": {
             "planned": len(planned),
             "previewed": queue_result.previewed_count,

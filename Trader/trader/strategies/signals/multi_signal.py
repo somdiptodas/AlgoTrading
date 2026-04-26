@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
-from typing import Sequence
+from typing import Iterator, Sequence
 
 from trader.data.models import MarketBar
 from trader.strategies.decisions import RuleDecision, SignalVote, TradeDecision
@@ -9,6 +11,20 @@ from trader.strategies.predicates import PREDICATES
 
 
 _COMBINERS = {"all", "any", "k_of_n"}
+_PredicateVoteCache = dict[tuple[object, ...], tuple[SignalVote, ...]]
+_PREDICATE_CACHE_CONTEXT: ContextVar[tuple[_PredicateVoteCache, tuple[object, ...]] | None] = ContextVar(
+    "multi_signal_predicate_cache",
+    default=None,
+)
+
+
+@contextmanager
+def predicate_vote_cache_context(cache: _PredicateVoteCache, scope: tuple[object, ...]) -> Iterator[None]:
+    token = _PREDICATE_CACHE_CONTEXT.set((cache, scope))
+    try:
+        yield
+    finally:
+        _PREDICATE_CACHE_CONTEXT.reset(token)
 
 
 def normalize_params(params: dict[str, object]) -> dict[str, object]:
@@ -101,10 +117,29 @@ def _evaluate_rule(
         raise ValueError("multi_signal rules must be normalized before evaluation")
     signals = _signals(rule)
     child_votes = [
-        PREDICATES.generate_votes(str(signal["name"]), history_bars, test_bars, signal["params"])
+        _generate_predicate_votes(str(signal["name"]), history_bars, test_bars, signal["params"])
         for signal in signals
     ]
     return [_combine_votes(str(rule["combiner"]), tuple(votes), rule) for votes in zip(*child_votes)]
+
+
+def _generate_predicate_votes(
+    name: str,
+    history_bars: tuple[MarketBar, ...],
+    test_bars: tuple[MarketBar, ...],
+    params: object,
+) -> tuple[SignalVote, ...]:
+    cache_context = _PREDICATE_CACHE_CONTEXT.get()
+    if cache_context is None:
+        return tuple(PREDICATES.generate_votes(name, history_bars, test_bars, params))  # type: ignore[arg-type]
+    cache, scope = cache_context
+    cache_key = (scope, name, _canonical_param_key(params))
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    votes = tuple(PREDICATES.generate_votes(name, history_bars, test_bars, params))  # type: ignore[arg-type]
+    cache[cache_key] = votes
+    return votes
 
 
 def _combine_votes(combiner: str, votes: tuple[SignalVote, ...], rule: dict[str, object]) -> RuleDecision:
@@ -139,6 +174,12 @@ def _status(passed: bool) -> str:
 
 def _canonical_params(params: dict[str, object]) -> dict[str, object]:
     return {key: params[key] for key in sorted(params)}
+
+
+def _canonical_param_key(params: object) -> str:
+    if not isinstance(params, dict):
+        return json.dumps(params, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return json.dumps(_canonical_params(params), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _signal_sort_key(signal: dict[str, object]) -> str:

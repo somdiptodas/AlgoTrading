@@ -440,6 +440,132 @@ def test_planner_adds_optuna_bucket_after_seed_history_and_persists_state(tmp_pa
     assert payload["pending_suggestions"]
 
 
+def test_planner_requires_viable_history_before_optuna_bucket(tmp_path: Path) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    grid = REGISTRY.parameter_grid("rsi_reversion")
+    history = tuple(
+        _entry(f"rsi_{index}", "rsi_reversion", grid[index], return_pct=float(index))
+        for index in range(9)
+    ) + (
+        _entry(
+            "rsi_failed",
+            "rsi_reversion",
+            grid[9],
+            return_pct=99.0,
+            stage_a_pass=0.0,
+            trade_count=2.0,
+            exposure_pct=0.5,
+        ),
+        _entry(
+            "rsi_low_trade",
+            "rsi_reversion",
+            grid[10],
+            return_pct=98.0,
+            trade_count=2.0,
+            exposure_pct=0.5,
+        ),
+    )
+
+    planned = planner.plan(
+        batch_size=20,
+        allowed_signal_families=("rsi_reversion",),
+        history_entries=history,
+        optuna_dir=tmp_path,
+    )
+
+    assert not any(item.generator_kind == "optuna_tpe" for item in planned)
+    assert not (tmp_path / "rsi_reversion.json").exists()
+
+
+def test_planner_ignores_stage_a_failed_parent_for_optuna(tmp_path: Path) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    grid = REGISTRY.parameter_grid("rsi_reversion")
+    history = tuple(
+        _entry(f"rsi_{index}", "rsi_reversion", grid[index], return_pct=float(index))
+        for index in range(10)
+    ) + (
+        _entry(
+            "rsi_failed",
+            "rsi_reversion",
+            grid[10],
+            return_pct=99.0,
+            stage_a_pass=0.0,
+            trade_count=2.0,
+            exposure_pct=0.5,
+        ),
+        _entry(
+            "rsi_low_trade",
+            "rsi_reversion",
+            grid[11],
+            return_pct=98.0,
+            trade_count=2.0,
+            exposure_pct=0.5,
+        ),
+    )
+
+    planned = planner.plan(
+        batch_size=20,
+        allowed_signal_families=("rsi_reversion",),
+        history_entries=history,
+        optuna_dir=tmp_path,
+    )
+    optuna_plans = [item for item in planned if item.generator_kind == "optuna_tpe"]
+    payload = json.loads((tmp_path / "rsi_reversion.json").read_text(encoding="utf-8"))
+
+    assert optuna_plans
+    assert all(item.parent_experiment_ids == ("rsi_9",) for item in optuna_plans)
+    assert {trial["experiment_id"] for trial in payload["completed_trials"]} == {f"rsi_{index}" for index in range(10)}
+
+
+def test_planner_requires_current_grid_history_before_optuna_bucket(tmp_path: Path) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    stale_params = {"rsi_length": 7, "oversold_threshold": 25.0, "overbought_threshold": 75.0}
+    history = tuple(
+        _entry(f"stale_{index}", "rsi_reversion", stale_params, return_pct=float(index))
+        for index in range(10)
+    )
+
+    planned = planner.plan(
+        batch_size=20,
+        allowed_signal_families=("rsi_reversion",),
+        history_entries=history,
+        optuna_dir=tmp_path,
+    )
+
+    assert not any(item.generator_kind == "optuna_tpe" for item in planned)
+    assert not (tmp_path / "rsi_reversion.json").exists()
+
+
+def test_planner_ignores_stale_current_grid_parent_for_optuna(tmp_path: Path) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    grid = REGISTRY.parameter_grid("rsi_reversion")
+    stale_params = {"rsi_length": 7, "oversold_threshold": 25.0, "overbought_threshold": 75.0}
+    history = tuple(
+        _entry(f"rsi_{index}", "rsi_reversion", grid[index], return_pct=float(index))
+        for index in range(10)
+    ) + (
+        _entry(
+            "stale_best",
+            "rsi_reversion",
+            stale_params,
+            return_pct=99.0,
+        ),
+    )
+
+    planned = planner.plan(
+        batch_size=20,
+        allowed_signal_families=("rsi_reversion",),
+        history_entries=history,
+        optuna_dir=tmp_path,
+    )
+    optuna_plans = [item for item in planned if item.generator_kind == "optuna_tpe"]
+    payload = json.loads((tmp_path / "rsi_reversion.json").read_text(encoding="utf-8"))
+
+    assert optuna_plans
+    assert all(item.parent_experiment_ids == ("rsi_9",) for item in optuna_plans)
+    assert {trial["experiment_id"] for trial in payload["completed_trials"]} == {f"rsi_{index}" for index in range(10)}
+
+
 def test_planner_loads_existing_optuna_study_without_fake_objectives(tmp_path: Path, monkeypatch) -> None:
     planner = DeterministicPlanner(REGISTRY)
     grid = REGISTRY.parameter_grid("rsi_reversion")
@@ -616,19 +742,99 @@ def test_planner_tunes_multi_signal_optuna_inside_fixed_shape(tmp_path: Path) ->
     assert any(len(payload["completed_trials"]) == 10 for payload in payloads)
 
 
+def test_planner_ignores_stage_a_failed_multi_signal_parent_for_optuna(tmp_path: Path) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    seed_plans = planner.plan(batch_size=10, allowed_signal_families=("multi_signal",))
+    seed_shape = strategy_shape_key(seed_plans[0].spec)
+    history = tuple(
+        _entry(f"multi_{index}", "multi_signal", seed_plans[index].spec.signal.params, return_pct=float(index))
+        for index in range(10)
+    ) + (
+        _entry(
+            "multi_failed",
+            "multi_signal",
+            seed_plans[0].spec.signal.params,
+            return_pct=99.0,
+            stage_a_pass=0.0,
+            trade_count=2.0,
+            exposure_pct=0.5,
+            exec_config=ExecConfig(entry_session_window="first_30m"),
+            sizing=SizingSpec("fixed_fraction", {"fraction": 0.25}),
+        ),
+        _entry(
+            "multi_low_trade",
+            "multi_signal",
+            seed_plans[1].spec.signal.params,
+            return_pct=98.0,
+            trade_count=2.0,
+            exposure_pct=0.5,
+            exec_config=ExecConfig(entry_session_window="first_30m"),
+            sizing=SizingSpec("fixed_fraction", {"fraction": 0.25}),
+        ),
+    )
+    underseeded = planner.plan(
+        batch_size=24,
+        allowed_signal_families=("multi_signal",),
+        history_entries=history[:9] + history[10:],
+        optuna_dir=tmp_path / "underseeded",
+    )
+    assert not any(item.generator_kind == "optuna_tpe" for item in underseeded)
+
+    planned = planner.plan(
+        batch_size=24,
+        allowed_signal_families=("multi_signal",),
+        history_entries=history,
+        optuna_dir=tmp_path / "qualified",
+    )
+    optuna_plans = [item for item in planned if item.generator_kind == "optuna_tpe"]
+    payloads = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "qualified").glob("multi_signal_*.json")
+    ]
+
+    assert optuna_plans
+    assert {strategy_shape_key(item.spec) for item in optuna_plans} == {seed_shape}
+    assert all(item.parent_experiment_ids == ("multi_9",) for item in optuna_plans)
+    assert all(item.spec.exec_config.entry_session_window == "all" for item in optuna_plans)
+    completed_ids = {
+        trial["experiment_id"]
+        for payload in payloads
+        if payload["shape_key"] == seed_shape
+        for trial in payload["completed_trials"]
+    }
+    assert completed_ids == {f"multi_{index}" for index in range(10)}
+
+
 def _entry(
     experiment_id: str,
     signal_name: str,
     params: dict[str, object],
     *,
     return_pct: float,
+    stage_a_pass: float | None = 1.0,
+    trade_count: float = 10.0,
+    exposure_pct: float = 1.0,
+    max_drawdown_pct: float = 0.0,
+    exec_config: ExecConfig | None = None,
+    sizing: SizingSpec | None = None,
 ) -> LedgerEntry:
     spec = REGISTRY.validate_spec(
         StrategySpec(
             name=experiment_id,
             signal=SignalSpec(signal_name, params),
+            sizing=sizing or SizingSpec("full_notional", {}),
+            exec_config=exec_config or ExecConfig(),
         )
     )
+    aggregate_metrics = {
+        "return_pct": return_pct,
+        "sharpe_like": 0.0,
+        "max_drawdown_pct": max_drawdown_pct,
+        "trade_count": trade_count,
+        "exposure_pct": exposure_pct,
+    }
+    if stage_a_pass is not None:
+        aggregate_metrics["stage_a_pass"] = stage_a_pass
     return LedgerEntry(
         experiment_id=experiment_id,
         evaluation_key=f"{experiment_id}_key",
@@ -638,11 +844,7 @@ def _entry(
         data_snapshot_id="snapshot",
         split_plan_id="split",
         cost_model_id="cost",
-        aggregate_metrics={
-            "return_pct": return_pct,
-            "sharpe_like": 0.0,
-            "max_drawdown_pct": 0.0,
-        },
+        aggregate_metrics=aggregate_metrics,
         fold_results=(),
         robustness_checks={},
         promotion_stage="exploratory",

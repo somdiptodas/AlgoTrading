@@ -14,6 +14,10 @@ from trader.strategies.spec import ExecConfig, FilterSpec, SignalSpec, SizingSpe
 
 _OPTUNA_SEED_EVALUATION_THRESHOLD = 10
 _OPTUNA_SUGGESTIONS_PER_FAMILY = 8
+_OPTUNA_SEED_HISTORY_POLICY = "stage_a_viable_v1"
+_OPTUNA_MIN_SEED_TRADE_COUNT = 10.0
+_OPTUNA_MIN_SEED_EXPOSURE_PCT = 1.0
+_OPTUNA_MAX_SEED_DRAWDOWN_PCT = 25.0
 _SIZING_GRID = (
     SizingSpec("fixed_fraction", {"fraction": 0.25}),
     SizingSpec("fixed_fraction", {"fraction": 0.50}),
@@ -434,13 +438,14 @@ class DeterministicPlanner:
             if not signal_grid:
                 continue
             family_entries = completed_by_family.get(signal_name, ())
-            if len(family_entries) < _OPTUNA_SEED_EVALUATION_THRESHOLD:
+            qualified_entries = _entries_matching_signal_grid(_optuna_seed_entries(family_entries), signal_grid)
+            if len(qualified_entries) < _OPTUNA_SEED_EVALUATION_THRESHOLD:
                 continue
-            best_entry = max(family_entries, key=lambda entry: entry.metric("return_pct"))
+            best_entry = max(qualified_entries, key=lambda entry: entry.metric("return_pct"))
             suggested_params = _suggest_tpe_params(
                 signal_name=signal_name,
                 signal_grid=signal_grid,
-                history_entries=family_entries,
+                history_entries=qualified_entries,
                 limit=_OPTUNA_SUGGESTIONS_PER_FAMILY,
                 optuna_dir=optuna_dir,
             )
@@ -475,20 +480,22 @@ class DeterministicPlanner:
         buckets: list[Iterable[PlannedSpec]] = []
         completed_by_shape = _completed_multi_signal_entries_by_shape(history_entries)
         for shape_key, shape_entries in completed_by_shape.items():
-            if len(shape_entries) < _OPTUNA_SEED_EVALUATION_THRESHOLD:
-                continue
-            best_entry = max(shape_entries, key=lambda entry: entry.metric("return_pct"))
-            shapes = _multi_signal_shapes_from_spec(best_entry.spec)
+            qualified_entries = _optuna_seed_entries(shape_entries)
+            shapes = _multi_signal_shapes_from_spec(shape_entries[0].spec)
             if shapes is None:
                 continue
             entry_shape, exit_shape = shapes
             choices_by_key = _multi_signal_choices_by_key(entry_shape, exit_shape)
             if not choices_by_key:
                 continue
+            qualified_entries = _entries_matching_multi_signal_choices(qualified_entries, choices_by_key)
+            if len(qualified_entries) < _OPTUNA_SEED_EVALUATION_THRESHOLD:
+                continue
+            best_entry = max(qualified_entries, key=lambda entry: entry.metric("return_pct"))
             suggested_params = _suggest_tpe_flat_params(
                 study_label=f"multi_signal_{_stable_seed(shape_key):08x}",
                 choices_by_key=choices_by_key,
-                history_entries=shape_entries,
+                history_entries=qualified_entries,
                 flatten_entry_params=lambda entry: _flatten_multi_signal_params(entry.spec.signal.params, choices_by_key),
                 limit=_OPTUNA_SUGGESTIONS_PER_FAMILY,
                 optuna_dir=optuna_dir,
@@ -519,7 +526,7 @@ class DeterministicPlanner:
                 _write_multi_signal_study_snapshot(
                     shape_key,
                     optuna_dir,
-                    shape_entries,
+                    qualified_entries,
                     choices_by_key,
                     suggested_params,
                 )
@@ -761,6 +768,45 @@ def _completed_multi_signal_entries_by_shape(entries: Sequence[LedgerEntry]) -> 
     return {shape_key: tuple(items) for shape_key, items in grouped.items()}
 
 
+def _optuna_seed_entries(entries: Sequence[LedgerEntry]) -> tuple[LedgerEntry, ...]:
+    return tuple(entry for entry in entries if _is_optuna_seed_entry(entry))
+
+
+def _entries_matching_signal_grid(
+    entries: Sequence[LedgerEntry],
+    signal_grid: Sequence[dict[str, object]],
+) -> tuple[LedgerEntry, ...]:
+    current_param_keys = {_params_key(params) for params in signal_grid}
+    return tuple(entry for entry in entries if _params_key(entry.spec.signal.params) in current_param_keys)
+
+
+def _entries_matching_multi_signal_choices(
+    entries: Sequence[LedgerEntry],
+    choices_by_key: dict[str, tuple[object, ...]],
+) -> tuple[LedgerEntry, ...]:
+    return tuple(
+        entry
+        for entry in entries
+        if _flat_params_match_choices(_flatten_multi_signal_params(entry.spec.signal.params, choices_by_key), choices_by_key)
+    )
+
+
+def _is_optuna_seed_entry(entry: LedgerEntry) -> bool:
+    if entry.status != "completed":
+        return False
+    stage_a_pass = entry.aggregate_metrics.get("stage_a_pass")
+    if stage_a_pass is not None and float(stage_a_pass) < 1.0:
+        return False
+    viable_trade_profile = (
+        entry.metric("trade_count") >= _OPTUNA_MIN_SEED_TRADE_COUNT
+        and entry.metric("exposure_pct") >= _OPTUNA_MIN_SEED_EXPOSURE_PCT
+        and entry.metric("max_drawdown_pct") <= _OPTUNA_MAX_SEED_DRAWDOWN_PCT
+    )
+    if stage_a_pass is not None:
+        return viable_trade_profile
+    return entry.metric("return_pct") > 0.0 and viable_trade_profile
+
+
 def _suggest_tpe_params(
     *,
     signal_name: str,
@@ -835,7 +881,7 @@ def _optuna_library_flat_suggestions(
         load_if_exists=True,
         sampler=sampler,
         storage=f"sqlite:///{optuna_dir / f'{study_label}.db'}",
-        study_name=f"{study_label}_return_pct",
+        study_name=f"{study_label}_{_OPTUNA_SEED_HISTORY_POLICY}_return_pct",
     )
     history_params = {
         entry.experiment_id: flatten_entry_params(entry)
@@ -927,7 +973,7 @@ def _optuna_library_suggestions(
         load_if_exists=True,
         sampler=sampler,
         storage=f"sqlite:///{optuna_dir / f'{signal_name}.db'}",
-        study_name=f"{signal_name}_return_pct",
+        study_name=f"{signal_name}_{_OPTUNA_SEED_HISTORY_POLICY}_return_pct",
     )
     seen_history = {_params_key(entry.spec.signal.params) for entry in history_entries}
     synced_experiment_ids = {
@@ -984,6 +1030,12 @@ def _params_match_distributions(params: dict[str, object], distributions: dict[s
     return True
 
 
+def _flat_params_match_choices(params: dict[str, object], choices_by_key: dict[str, tuple[object, ...]]) -> bool:
+    if set(params) != set(choices_by_key):
+        return False
+    return all(params[key] in choices_by_key[key] for key in choices_by_key)
+
+
 def _history_density_suggestions(
     signal_grid: Sequence[dict[str, object]],
     history_entries: Sequence[LedgerEntry],
@@ -1038,6 +1090,7 @@ def _write_study_snapshot(
     payload = {
         "signal_family": signal_name,
         "sampler": "optuna_tpe",
+        "seed_history_policy": _OPTUNA_SEED_HISTORY_POLICY,
         "seed_evaluation_threshold": _OPTUNA_SEED_EVALUATION_THRESHOLD,
         "objective": "return_pct",
         "completed_trials": [
@@ -1067,6 +1120,7 @@ def _write_multi_signal_study_snapshot(
         "search_space_version": MULTI_SIGNAL_SEARCH_SPACE_VERSION,
         "shape_key": shape_key,
         "sampler": "optuna_tpe",
+        "seed_history_policy": _OPTUNA_SEED_HISTORY_POLICY,
         "seed_evaluation_threshold": _OPTUNA_SEED_EVALUATION_THRESHOLD,
         "objective": "return_pct",
         "parameter_choices": {key: list(values) for key, values in sorted(choices_by_key.items())},

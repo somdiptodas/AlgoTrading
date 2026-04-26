@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES, _DEFAULT_SIGNAL_FAMILIES
-from trader.cli.loop_cmd import _active_data_snapshot_id, _add_timing, _current_snapshot_entries, _max_preview_count, _new_timings, _planned_spec_count, _should_restart_planner, _suppression_audit_types, _timing_payload
+from trader.cli.loop_cmd import _active_data_snapshot_id, _add_timing, _current_snapshot_entries, _max_preview_count, _new_timings, _planned_spec_count, _search_exhaustion_status, _should_restart_planner, _suppression_audit_types, _timing_payload
 from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _load_or_seed_critic_memory, _loop_experiment_summary, _mark_stage_a_passed, _prescreen_stage_a_candidates, _stage_b_worker_count, _write_loop_outputs, build_parser
 from trader.config import Settings
 from trader.evaluation.runner import ExperimentResult
@@ -112,20 +112,9 @@ def test_current_snapshot_entries_filters_stale_entries_and_keeps_distinct_costs
         SimpleNamespace(experiment_id="active_b", data_snapshot_id="active_snapshot", spec="active_spec_b", cost_model_id="cost_b"),
     )
 
-    class FakeRunner:
-        def preview_walk_forward(self, spec, *, num_folds, embargo_bars, locked_holdout_months):
-            assert num_folds == 3
-            assert embargo_bars == 1
-            assert locked_holdout_months == 2
-            snapshot_id = "old_current_snapshot" if spec == "old_spec" else "active_snapshot"
-            return SimpleNamespace(data_slice=SimpleNamespace(snapshot_id=snapshot_id))
-
     current = _current_snapshot_entries(
         entries,
-        FakeRunner(),
-        num_folds=3,
-        embargo_bars=1,
-        locked_holdout_months=2,
+        active_data_snapshot_id="active_snapshot",
     )
 
     assert [entry.experiment_id for entry in current] == ["active_a", "active_b"]
@@ -133,7 +122,7 @@ def test_current_snapshot_entries_filters_stale_entries_and_keeps_distinct_costs
 
 def test_stage_b_worker_count_caps_at_eight() -> None:
     assert _stage_b_worker_count(0) == 0
-    assert _stage_b_worker_count(1) == 4
+    assert _stage_b_worker_count(1) == 1
     assert _stage_b_worker_count(4) == 4
     assert _stage_b_worker_count(6) == 6
     assert _stage_b_worker_count(12) == 8
@@ -171,13 +160,34 @@ def test_evaluate_selected_candidates_preserves_order_and_sums_worker_timings(mo
         executor_factory=InlineExecutor,
     )
 
-    assert used_workers == [4]
+    assert used_workers == [2]
     assert results == ("first", "second")
     assert timings == {
         "stage_a": 1.0,
         "stage_b": 4.0,
         "robustness_neighbors": 2.5,
     }
+
+
+def test_evaluate_selected_candidates_runs_single_candidate_inline(monkeypatch) -> None:
+    class UnusedExecutor:
+        def __init__(self, *, max_workers: int) -> None:
+            raise AssertionError("single candidate should not start a process pool")
+
+    def fake_worker(payload):
+        _, preview = payload
+        return preview, {"stage_b": 2.0}
+
+    monkeypatch.setattr("trader.cli.loop_cmd._evaluate_candidate_worker", fake_worker)
+
+    results, timings = _evaluate_selected_candidates(
+        (SimpleNamespace(preview="only"),),
+        "/tmp/market.db",
+        executor_factory=UnusedExecutor,
+    )
+
+    assert results == ("only",)
+    assert timings == {"stage_a": 0.0, "stage_b": 2.0, "robustness_neighbors": 0.0}
 
 
 def test_evaluate_candidate_worker_reopens_database_path(monkeypatch) -> None:
@@ -260,6 +270,145 @@ def test_prescreen_stage_a_suppresses_third_nearby_failure(monkeypatch) -> None:
     assert result.suppression_records[0].spec_hash == specs[2].spec_hash()
 
 
+def test_prescreen_stage_a_parallel_path_preserves_order_and_suppression(monkeypatch) -> None:
+    specs = (
+        StrategySpec(
+            name="near_1",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        ),
+        StrategySpec(
+            name="near_2",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        ),
+        StrategySpec(
+            name="near_3",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        ),
+        StrategySpec(
+            name="far",
+            signal=SignalSpec("breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0}),
+        ),
+    )
+    candidates = tuple(
+        SimpleNamespace(preview=SimpleNamespace(spec=spec, evaluation_key=f"key_{index}"))
+        for index, spec in enumerate(specs)
+    )
+    used_workers = []
+
+    class InlineExecutor:
+        def __init__(self, *, max_workers: int) -> None:
+            used_workers.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def map(self, fn, payloads):
+            return [fn(payload) for payload in payloads]
+
+    def fake_stage_a_worker(payload):
+        _, preview = payload
+        if preview.spec.signal.name == "breakout":
+            return None, {"stage_a": 0.25}
+        return (
+            SimpleNamespace(
+                experiment_id=preview.evaluation_key,
+                spec=preview.spec,
+                robustness_checks={
+                    "stage_a_pass": False,
+                    "stage_a_reject_non_positive_return": True,
+                },
+            ),
+            {"stage_a": 0.25},
+        )
+
+    monkeypatch.setattr("trader.cli.loop_cmd._evaluate_stage_a_candidate_worker", fake_stage_a_worker)
+    result = _prescreen_stage_a_candidates(
+        candidates,
+        SimpleNamespace(evaluate_stage_a_preview=lambda preview: None),
+        suppressor_radius=0.2,
+        database_path="/tmp/market.db",
+        executor_factory=InlineExecutor,
+    )
+
+    assert used_workers == [2]
+    assert [item[0].preview.spec.name for item in result.completed_results] == ["near_1", "near_2"]
+    assert [candidate.preview.spec.name for candidate in result.stage_b_candidates] == ["far"]
+    assert len(result.suppression_records) == 1
+    assert result.timings["stage_a"] >= 0.5
+
+
+def test_prescreen_stage_a_parallel_path_keeps_sequential_suppression_after_prior_failure(monkeypatch) -> None:
+    specs = (
+        StrategySpec(
+            name="near_1",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        ),
+        StrategySpec(
+            name="far",
+            signal=SignalSpec("breakout", {"entry_window": 20, "exit_window": 10, "buffer_bps": 0.0}),
+        ),
+        StrategySpec(
+            name="near_2",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        ),
+        StrategySpec(
+            name="near_3",
+            signal=SignalSpec("ema_cross", {"fast_length": 20, "slow_length": 80, "signal_buffer_bps": 0.0}),
+        ),
+    )
+    candidates = tuple(
+        SimpleNamespace(preview=SimpleNamespace(spec=spec, evaluation_key=f"key_{index}"))
+        for index, spec in enumerate(specs)
+    )
+    used_workers = []
+
+    class InlineExecutor:
+        def __init__(self, *, max_workers: int) -> None:
+            used_workers.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def map(self, fn, payloads):
+            return [fn(payload) for payload in payloads]
+
+    def failed_stage_a_result(preview):
+        return SimpleNamespace(
+            experiment_id=preview.evaluation_key,
+            spec=preview.spec,
+            robustness_checks={
+                "stage_a_pass": False,
+                "stage_a_reject_non_positive_return": True,
+            },
+        )
+
+    def fake_stage_a_worker(payload):
+        _, preview = payload
+        if preview.spec.signal.name == "breakout":
+            return None, {"stage_a": 0.25}
+        return failed_stage_a_result(preview), {"stage_a": 0.25}
+
+    monkeypatch.setattr("trader.cli.loop_cmd._evaluate_stage_a_candidate_worker", fake_stage_a_worker)
+    result = _prescreen_stage_a_candidates(
+        candidates,
+        SimpleNamespace(evaluate_stage_a_preview=failed_stage_a_result),
+        suppressor_radius=0.2,
+        database_path="/tmp/market.db",
+        executor_factory=InlineExecutor,
+    )
+
+    assert used_workers == [2]
+    assert [item[0].preview.spec.name for item in result.completed_results] == ["near_1", "near_2"]
+    assert [candidate.preview.spec.name for candidate in result.stage_b_candidates] == ["far"]
+    assert [record.spec_hash for record in result.suppression_records] == [specs[3].spec_hash()]
+
+
 def test_mark_stage_a_passed_carries_prescreen_evidence() -> None:
     spec = StrategySpec(
         name="ema",
@@ -283,6 +432,21 @@ def test_mark_stage_a_passed_carries_prescreen_evidence() -> None:
 
     assert marked is not result
     assert marked.aggregate_metrics == {"return_pct": 1.0, "stage_a_pass": 1.0}
+
+
+def test_search_exhaustion_status_marks_low_unique_yield() -> None:
+    assert _search_exhaustion_status(
+        SimpleNamespace(selected=tuple(), duplicate_count=8),
+        batch_size=6,
+    ) == {"exhausted": True, "reason": "no_unique_candidates"}
+    assert _search_exhaustion_status(
+        SimpleNamespace(selected=(1, 2), duplicate_count=8),
+        batch_size=6,
+    ) == {"exhausted": True, "reason": "low_unique_candidate_yield"}
+    assert _search_exhaustion_status(
+        SimpleNamespace(selected=(1, 2, 3, 4), duplicate_count=8),
+        batch_size=6,
+    ) == {"exhausted": False, "reason": ""}
 
 
 def test_load_or_seed_critic_memory_consumes_existing_disk_file(tmp_path: Path, monkeypatch) -> None:

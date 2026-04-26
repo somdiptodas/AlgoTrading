@@ -36,6 +36,7 @@ from trader.features.pipeline import FeatureCache, feature_cache_context
 from trader.strategies.decisions import TradeDecision
 from trader.strategies.registry import StrategyRegistry
 from trader.strategies.filters.regime import generate_reporting_regime_labels
+from trader.strategies.signals import multi_signal as multi_signal_module
 from trader.strategies.spec import ExecConfig, StrategySpec
 
 DEFAULT_LOCKED_HOLDOUT_MONTHS = 3
@@ -96,11 +97,13 @@ class EvaluationRunner:
         self.data_view = data_view
         self.registry = registry
         self._data_slice_cache: dict[tuple[object, ...], DataSlice] = {}
+        self._research_holdout_cache: dict[tuple[str, int, int | None], tuple[DataSlice, tuple[MarketBar, ...], str | None]] = {}
         self._split_cache: dict[tuple[str, int, int, int], tuple[str, tuple[Fold, ...]]] = {}
         self._snapshot_subhash_cache: dict[tuple[str, int, int], str] = {}
         self._fold_result_cache: dict[tuple[object, ...], FoldResult] = {}
         self._baseline_cache: dict[tuple[object, ...], dict[str, dict[str, float]]] = {}
         self._indicator_cache: FeatureCache = {}
+        self._predicate_vote_cache: dict[tuple[object, ...], tuple] = {}
         self.phase_timings: dict[str, float] = {}
 
     def evaluate_single_window(
@@ -538,6 +541,11 @@ class EvaluationRunner:
             len(test_bars),
         )
         with feature_cache_context(self._indicator_cache, scope):
+            if spec.signal.name == "multi_signal":
+                if not hasattr(self, "_predicate_vote_cache"):
+                    self._predicate_vote_cache = {}
+                with multi_signal_module.predicate_vote_cache_context(self._predicate_vote_cache, scope):
+                    return self._generate_signal_state(spec, train_bars, test_bars)
             return self._generate_signal_state(spec, train_bars, test_bars)
 
     def _generate_signal_state(
@@ -651,7 +659,13 @@ class EvaluationRunner:
             len(test_bars),
         )
         with feature_cache_context(self._indicator_cache, scope):
-            signal_state = self._generate_signal_state(spec, train_bars, test_bars)
+            if spec.signal.name == "multi_signal":
+                if not hasattr(self, "_predicate_vote_cache"):
+                    self._predicate_vote_cache = {}
+                with multi_signal_module.predicate_vote_cache_context(self._predicate_vote_cache, scope):
+                    signal_state = self._generate_signal_state(spec, train_bars, test_bars)
+            else:
+                signal_state = self._generate_signal_state(spec, train_bars, test_bars)
         sizing_fraction = self.registry.compute_sizing_fraction(spec)
         result = self._run_signal_state_backtest(test_bars, signal_state, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
@@ -834,6 +848,12 @@ class EvaluationRunner:
     ) -> tuple[DataSlice, tuple[MarketBar, ...], str | None]:
         if not data_slice.bars or locked_holdout_months is None or locked_holdout_months <= 0:
             return data_slice, tuple(), None
+        if not hasattr(self, "_research_holdout_cache"):
+            self._research_holdout_cache = {}
+        cache_key = (data_slice.snapshot_id, embargo_bars, locked_holdout_months)
+        cached = self._research_holdout_cache.get(cache_key)
+        if cached is not None:
+            return cached
         cutoff = _subtract_months(data_slice.bars[-1].dt_local, locked_holdout_months)
         holdout_start_idx = len(data_slice.bars)
         for index, bar in enumerate(data_slice.bars):
@@ -851,7 +871,9 @@ class EvaluationRunner:
             first_timestamp_utc=research_bars[0].timestamp_utc,
             last_timestamp_utc=research_bars[-1].timestamp_utc,
         )
-        return research_slice, holdout_bars, self._snapshot_subhash(data_slice, holdout_start_idx, len(data_slice.bars))
+        output = (research_slice, holdout_bars, self._snapshot_subhash(data_slice, holdout_start_idx, len(data_slice.bars)))
+        self._research_holdout_cache[cache_key] = output
+        return output
 
     def _snapshot_subhash(self, data_slice: DataSlice, start_idx: int, end_idx: int) -> str:
         if not hasattr(self, "_snapshot_subhash_cache"):
