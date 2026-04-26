@@ -10,13 +10,14 @@ from time import perf_counter
 from typing import Callable, Sequence
 
 from trader.artifacts.store import ArtifactStore
-from trader.config import load_settings
+from trader.config import Settings, load_settings
 from trader.data.view import DataView
 from trader.evaluation.runner import DEFAULT_LOCKED_HOLDOUT_MONTHS, EvaluationPreview, EvaluationRunner, ExperimentResult
 from trader.ledger.entry import json_dumps
 from trader.ledger.entry import LedgerEntry
 from trader.ledger.store import LedgerStore
 from trader.reporting.report import render_experiment_report
+from trader.reporting.run_dashboard import LoopRunOutputs, ReportPathConventions, write_loop_run_outputs
 from trader.research.candidates import DeterministicCandidateQueue, ScoredCandidate
 from trader.research.critic import HeuristicCritic
 from trader.research.critic_memory import CriticRegionMemory
@@ -226,6 +227,28 @@ def _mark_stage_a_passed(result: ExperimentResult) -> ExperimentResult:
     )
 
 
+def _loop_experiment_summary(
+    result: ExperimentResult,
+    *,
+    generator_kind: str,
+    artifact_paths: dict[str, str],
+) -> dict[str, object]:
+    return {
+        "experiment_id": result.experiment_id,
+        "family": result.spec.signal.name,
+        "promotion_stage": result.promotion_stage,
+        "generator_kind": generator_kind,
+        "shape_key": result.spec.signal.name,
+        "aggregate_metrics": dict(result.aggregate_metrics),
+        "artifact_paths": dict(artifact_paths),
+    }
+
+
+def _write_loop_outputs(loop_payload: dict[str, object], settings: Settings) -> LoopRunOutputs:
+    paths = ReportPathConventions(reports_dir=settings.reports_dir, artifacts_dir=settings.artifacts_dir)
+    return write_loop_run_outputs(loop_payload, paths)
+
+
 def _prescreen_stage_a_candidates(
     selected_candidates: Sequence[ScoredCandidate],
     runner: EvaluationRunner,
@@ -331,6 +354,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     completed = []
+    completed_experiments = []
     reused = queue_result.duplicate_count
     selected_candidates = queue_result.selected[: args.batch_size]
     prescreen = _prescreen_stage_a_candidates(
@@ -376,6 +400,13 @@ def main(argv: list[str] | None = None) -> None:
         )
         _add_timing(timings, "ledger_write", started)
         completed.append(result)
+        completed_experiments.append(
+            _loop_experiment_summary(
+                result,
+                generator_kind=candidate.planned.generator_kind,
+                artifact_paths=artifact_paths,
+            )
+        )
 
     # --- Persist suppression audit records to the ledger ---
     evaluated_spec_hashes = {result.spec_hash for result in completed}
@@ -408,52 +439,65 @@ def main(argv: list[str] | None = None) -> None:
     frontier = frontier_manager.rank(
         [entry.to_result() for entry in ledger.query.top_experiments(fresh_history_entries, limit=args.frontier_limit)]
     )
-    print(json_dumps(
-        {
-            "loop_run_id": loop_run_id,
-            "active_data_snapshot_id": active_data_snapshot_id,
-            "signal_families": list(signal_families),
-            "history": {
-                "total_completed": len(all_history_entries),
-                "active_completed": len(history_entries),
-                "ignored_stale_completed": len(all_history_entries) - len(history_entries),
-            },
-            "planned": len(planned),
-            "accepted": len(queue_result.selected),
-            "completed": len(completed),
-            "reused": reused,
-            "counts": {
-                "planned": len(planned),
-                "previewed": queue_result.previewed_count,
-                "selected": len(queue_result.selected),
-                "evaluated": len(completed),
-                "duplicate": queue_result.duplicate_count,
-                "suppressed": suppression_logged,
-                "suppressed_evaluated": sum(1 for value in audit_type_by_spec_hash.values() if value == "evaluated"),
-                "suppressed_preview_discarded": sum(
-                    1 for value in audit_type_by_spec_hash.values() if value == "preview_discarded"
-                ),
-                "suppressed_stage_a_suppressed": sum(
-                    1 for value in audit_type_by_spec_hash.values() if value == "stage_a_suppressed"
-                ),
-            },
-            "rejected": list(generated.rejected),
-            "timings_sec": _timing_payload(timings),
-            "suppressor": {
-                **suppressor.summary(),
-                "candidates_suppressed": suppression_logged,
-                "by_family": suppression_summary.get("by_family", []),
-                "by_type": suppression_summary.get("by_type", []),
-            },
-            "frontier": [
-                {
-                    "experiment_id": item.experiment_id,
-                    "family": item.family,
-                    "score_vector": item.score_vector,
-                    "promotion_stage": item.promotion_stage,
-                }
-                for item in frontier
-            ],
+    loop_payload = {
+        "loop_run_id": loop_run_id,
+        "active_data_snapshot_id": active_data_snapshot_id,
+        "signal_families": list(signal_families),
+        "history": {
+            "total_completed": len(all_history_entries),
+            "active_completed": len(history_entries),
+            "ignored_stale_completed": len(all_history_entries) - len(history_entries),
         },
-        pretty=True,
-    ))
+        "planned": len(planned),
+        "accepted": len(queue_result.selected),
+        "completed": len(completed),
+        "reused": reused,
+        "counts": {
+            "planned": len(planned),
+            "previewed": queue_result.previewed_count,
+            "selected": len(queue_result.selected),
+            "evaluated": len(completed),
+            "duplicate": queue_result.duplicate_count,
+            "suppressed": suppression_logged,
+            "suppressed_evaluated": sum(1 for value in audit_type_by_spec_hash.values() if value == "evaluated"),
+            "suppressed_preview_discarded": sum(
+                1 for value in audit_type_by_spec_hash.values() if value == "preview_discarded"
+            ),
+            "suppressed_stage_a_suppressed": sum(
+                1 for value in audit_type_by_spec_hash.values() if value == "stage_a_suppressed"
+            ),
+        },
+        "experiments": completed_experiments,
+        "rejected": list(generated.rejected),
+        "timings_sec": _timing_payload(timings),
+        "suppressor": {
+            **suppressor.summary(),
+            "candidates_suppressed": suppression_logged,
+            "by_family": suppression_summary.get("by_family", []),
+            "by_type": suppression_summary.get("by_type", []),
+        },
+        "frontier": [
+            {
+                "experiment_id": item.experiment_id,
+                "family": item.family,
+                "score_vector": item.score_vector,
+                "promotion_stage": item.promotion_stage,
+            }
+            for item in frontier
+        ],
+    }
+    outputs = _write_loop_outputs(loop_payload, settings)
+    print(
+        json_dumps(
+            {
+                **loop_payload,
+                "reporting": {
+                    "loop_json": str(outputs.loop_json_path.resolve()),
+                    "run_report": str(outputs.run_report_path.resolve()),
+                    "dashboard": str(outputs.dashboard_path.resolve()),
+                    "trade_reports": [str(path.resolve()) for path in outputs.trade_reports],
+                },
+            },
+            pretty=True,
+        )
+    )

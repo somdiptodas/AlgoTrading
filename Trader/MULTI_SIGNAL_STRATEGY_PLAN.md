@@ -309,7 +309,7 @@ the checklist in each commit.
       raw artifacts.
 - [x] Add a CLI command to rebuild all generated reporting HTML from existing
       local artifacts.
-- [ ] Update the loop command to write or refresh the run HTML and main
+- [x] Update the loop command to write or refresh the run HTML and main
       dashboard after each loop run.
 - [ ] Update the trade HTML report to show rule-level entry and exit reasons.
 - [ ] Add expandable vote details per trade.

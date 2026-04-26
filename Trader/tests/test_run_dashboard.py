@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from trader.reporting.run_dashboard import ReportPathConventions, write_dashboard, write_run_report_from_json
+from trader.reporting.run_dashboard import (
+    ReportPathConventions,
+    write_dashboard,
+    write_loop_run_outputs,
+    write_run_report_from_json,
+)
 
 
 def test_report_path_conventions_are_stable(tmp_path: Path) -> None:
@@ -166,3 +171,57 @@ def test_write_dashboard_lists_runs_newest_first_with_report_and_artifact_links(
     assert 'href="exp_new_trades.html"' in html
     assert 'href="exp_new.md"' in html
     assert 'href="../artifacts/exp_new/result.json"' in html
+
+
+def test_write_loop_run_outputs_persists_json_and_refreshes_html(tmp_path: Path) -> None:
+    paths = ReportPathConventions(
+        reports_dir=tmp_path / "reports",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    experiment_dir = paths.experiment_artifact_dir("exp_1")
+    experiment_dir.mkdir(parents=True)
+    (experiment_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "experiment_id": "exp_1",
+                "spec": {"name": "multi_signal_test", "signal": {"name": "multi_signal", "params": {}}},
+                "aggregate_metrics": {"return_pct": 1.0, "trade_count": 0},
+                "promotion_stage": "candidate",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (experiment_dir / "trades.json").write_text(
+        json.dumps({"experiment_id": "exp_1", "folds": []}),
+        encoding="utf-8",
+    )
+    (experiment_dir / "equity.json").write_text(
+        json.dumps({"experiment_id": "exp_1", "folds": []}),
+        encoding="utf-8",
+    )
+    (experiment_dir / "manifest.json").write_text(
+        json.dumps({"experiment_id": "exp_1", "promotion_stage": "candidate"}),
+        encoding="utf-8",
+    )
+    paths.experiment_markdown_path("exp_1").parent.mkdir(parents=True)
+    paths.experiment_markdown_path("exp_1").write_text("# Experiment exp_1\n", encoding="utf-8")
+
+    outputs = write_loop_run_outputs(
+        {
+            "loop_run_id": "run_1",
+            "completed_at_utc": "2026-04-26T10:00:00+00:00",
+            "planned": 1,
+            "completed": 1,
+            "experiments": [{"experiment_id": "exp_1"}],
+        },
+        paths,
+    )
+
+    assert outputs.loop_json_path == paths.loop_json_path("run_1")
+    assert outputs.run_report_path == paths.run_html_path("run_1")
+    assert outputs.dashboard_path == paths.dashboard_path
+    assert outputs.trade_reports == (paths.experiment_trade_html_path("exp_1"),)
+    assert paths.loop_json_path("run_1").exists()
+    assert paths.run_html_path("run_1").exists()
+    assert paths.dashboard_path.exists()
+    assert paths.experiment_trade_html_path("exp_1").exists()

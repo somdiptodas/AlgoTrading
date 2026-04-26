@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES
 from trader.cli.loop_cmd import _active_data_snapshot_id, _add_timing, _current_snapshot_entries, _max_preview_count, _new_timings, _planned_spec_count, _suppression_audit_types, _timing_payload
-from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _load_or_seed_critic_memory, _mark_stage_a_passed, _prescreen_stage_a_candidates, _stage_b_worker_count, build_parser
+from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _load_or_seed_critic_memory, _loop_experiment_summary, _mark_stage_a_passed, _prescreen_stage_a_candidates, _stage_b_worker_count, _write_loop_outputs, build_parser
+from trader.config import Settings
 from trader.evaluation.runner import ExperimentResult
 from trader.research.suppressor import SuppressedSpec
 from trader.strategies.spec import SignalSpec, StrategySpec
@@ -322,3 +323,65 @@ def test_load_or_seed_critic_memory_seeds_missing_disk_file(tmp_path: Path, monk
 
     assert isinstance(memory, FakeMemory)
     assert calls == [("from_entries", ("history",)), ("write", path)]
+
+
+def test_loop_experiment_summary_carries_reporting_payload() -> None:
+    spec = StrategySpec(
+        name="multi_signal_test",
+        signal=SignalSpec("multi_signal", {"entry_rule": {}, "exit_rule": {}}),
+    )
+    result = ExperimentResult(
+        experiment_id="exp_1",
+        status="completed",
+        spec=spec,
+        spec_hash=spec.spec_hash(),
+        data_snapshot_id="snapshot",
+        split_plan_id="split",
+        cost_model_id=spec.exec_config.cost_model_id(),
+        aggregate_metrics={"return_pct": 2.0, "trade_count": 4.0},
+        fold_results=tuple(),
+        robustness_checks={},
+        promotion_stage="candidate",
+    )
+
+    summary = _loop_experiment_summary(
+        result,
+        generator_kind="frontier_neighborhood",
+        artifact_paths={"result": "/tmp/result.json"},
+    )
+
+    assert summary == {
+        "experiment_id": "exp_1",
+        "family": "multi_signal",
+        "promotion_stage": "candidate",
+        "generator_kind": "frontier_neighborhood",
+        "shape_key": "multi_signal",
+        "aggregate_metrics": {"return_pct": 2.0, "trade_count": 4.0},
+        "artifact_paths": {"result": "/tmp/result.json"},
+    }
+
+
+def test_write_loop_outputs_uses_settings_report_conventions(tmp_path: Path, monkeypatch) -> None:
+    calls = {}
+    sentinel = SimpleNamespace(loop_json_path="loop.json")
+
+    def fake_write_loop_run_outputs(loop_payload, paths):
+        calls["loop_payload"] = loop_payload
+        calls["paths"] = paths
+        return sentinel
+
+    monkeypatch.setattr("trader.cli.loop_cmd.write_loop_run_outputs", fake_write_loop_run_outputs)
+    settings = Settings(
+        database_path=tmp_path / "market.db",
+        research_dir=tmp_path / "research",
+        ledger_path=tmp_path / "research" / "ledger.db",
+        artifacts_dir=tmp_path / "research" / "artifacts",
+        reports_dir=tmp_path / "research" / "reports",
+    )
+
+    output = _write_loop_outputs({"loop_run_id": "run_1"}, settings)
+
+    assert output is sentinel
+    assert calls["loop_payload"] == {"loop_run_id": "run_1"}
+    assert calls["paths"].reports_dir == settings.reports_dir
+    assert calls["paths"].artifacts_dir == settings.artifacts_dir

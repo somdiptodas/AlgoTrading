@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from trader.ledger.entry import json_dumps
 from trader.reporting.trade_visualization import write_trade_visualization
 
 
@@ -51,6 +52,14 @@ class RebuildReportsResult:
     dashboard_path: Path
 
 
+@dataclass(frozen=True)
+class LoopRunOutputs:
+    loop_json_path: Path
+    run_report_path: Path
+    dashboard_path: Path
+    trade_reports: tuple[Path, ...]
+
+
 def _safe_report_id(value: str) -> str:
     candidate = str(value).strip()
     if not candidate or "/" in candidate or "\\" in candidate or candidate in {".", ".."}:
@@ -70,6 +79,22 @@ def rebuild_reports(paths: ReportPathConventions) -> RebuildReportsResult:
         trade_reports=trade_reports,
         run_reports=run_reports,
         dashboard_path=dashboard_path,
+    )
+
+
+def write_loop_run_outputs(loop_payload: Mapping[str, Any], paths: ReportPathConventions) -> LoopRunOutputs:
+    loop_run_id = _loop_run_id(loop_payload)
+    paths.run_reports_dir.mkdir(parents=True, exist_ok=True)
+    loop_json_path = paths.loop_json_path(loop_run_id)
+    loop_json_path.write_text(json_dumps(dict(loop_payload), pretty=True), encoding="utf-8")
+    trade_reports = _write_trade_reports_for_payload(loop_payload, paths)
+    run_report_path = write_run_report_from_json(loop_json_path, paths)
+    dashboard_path = write_dashboard(paths)
+    return LoopRunOutputs(
+        loop_json_path=loop_json_path,
+        run_report_path=run_report_path,
+        dashboard_path=dashboard_path,
+        trade_reports=trade_reports,
     )
 
 
@@ -218,6 +243,21 @@ def _experiment_artifact_dirs(paths: ReportPathConventions) -> tuple[Path, ...]:
         and (path / "trades.json").exists()
         and (path / "equity.json").exists()
     )
+
+
+def _write_trade_reports_for_payload(loop_payload: Mapping[str, Any], paths: ReportPathConventions) -> tuple[Path, ...]:
+    written = []
+    for item in loop_payload.get("experiments") or loop_payload.get("completed_experiments") or ():
+        experiment_id = _safe_report_id(str(dict(item).get("experiment_id") or ""))
+        experiment_dir = paths.experiment_artifact_dir(experiment_id)
+        if not (
+            (experiment_dir / "result.json").exists()
+            and (experiment_dir / "trades.json").exists()
+            and (experiment_dir / "equity.json").exists()
+        ):
+            continue
+        written.append(write_trade_visualization(experiment_dir, paths.experiment_trade_html_path(experiment_id)))
+    return tuple(written)
 
 
 def _loop_json_paths(paths: ReportPathConventions) -> tuple[Path, ...]:
