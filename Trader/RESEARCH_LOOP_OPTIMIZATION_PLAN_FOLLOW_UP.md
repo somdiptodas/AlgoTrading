@@ -7,5 +7,7 @@
 - [ ] Decide whether `trades.json` should become a standalone reconstruction artifact; today exact per-minute equity reconstruction still needs bars/config from `result.json` in addition to the trade cost fields now stored in `trades.json`.
 - [ ] Consider merging or rebuilding stale/malformed `critic_memory.json` from the ledger before queue scoring instead of using the persisted file as-is for that run.
 - [ ] Add a full loop integration test that verifies a mixed batch writes both Stage-A-passed survivor artifacts and `stage_a_suppressed` suppression-log rows.
+- [ ] Add per-loop telemetry for `generator_kind` mix in CLI output/plan reports so future runs can explicitly detect mode collapse (this run completed 30/30 experiments with no frontier promotions, while `composite_grid` dominated 50%+ of completions).
+- [ ] Add a smoke assertion that frontier-utility generators used by planner (including `frontier_neighborhood` and `optuna_tpe`) are actually represented in completed batches when enabled, since this 5-iteration window produced no frontier_neighborhood or optuna_tpe completions.
 
 - [ ] Add a runner-level regression test proving aggregate `information_ratio_vs_buy_and_hold` is recomputed from pooled daily active returns across fold backtests, not averaged from fold-level IR values.
