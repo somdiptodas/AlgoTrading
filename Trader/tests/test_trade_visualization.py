@@ -87,6 +87,43 @@ def test_trade_visualization_renders_rule_reasons(tmp_path: Path) -> None:
     assert "exit any blocked: 0/3 signals" in html
 
 
+def test_trade_visualization_renders_expandable_vote_details(tmp_path: Path) -> None:
+    experiment_dir = _write_experiment_artifacts(
+        tmp_path,
+        {
+            "entry_timestamp_utc": "2026-01-05T14:30:00+00:00",
+            "exit_timestamp_utc": "2026-01-05T14:35:00+00:00",
+            "entry_price": 100.0,
+            "exit_price": 101.0,
+            "shares": 10,
+            "bars_held": 5,
+            "pnl_cash": 10.0,
+            "pnl_pct": 1.0,
+            "entry_reason": "signal_on",
+            "exit_reason": "signal_flip",
+            "entry_rule": {"passed": True, "reason": "entry k_of_n passed: 3/5 signals"},
+            "exit_rule": {"passed": True, "reason": "exit any passed: 1/3 signals"},
+            "entry_votes": [
+                {"name": "rsi_below", "passed": True, "detail": "RSI 28.4 < 30.0"},
+            ],
+            "exit_votes": [
+                {"name": "rsi_above", "passed": False, "detail": "RSI 45.0 < 70.0"},
+            ],
+            "cost_cash": 0.0,
+        },
+    )
+
+    output = write_trade_visualization(experiment_dir, tmp_path / "trade_review.html")
+    html = output.read_text(encoding="utf-8")
+
+    assert '<details class="vote-details">' in html
+    assert "Vote details" in html
+    assert "Entry votes" in html
+    assert "Exit votes" in html
+    assert "rsi_below" in html
+    assert "RSI 28.4 &lt; 30.0" in html
+
+
 def _write_experiment_artifacts(tmp_path: Path, trade: dict[str, object]) -> Path:
     experiment_dir = tmp_path / "artifacts" / "exp_1"
     experiment_dir.mkdir(parents=True)

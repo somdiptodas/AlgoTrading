@@ -170,6 +170,11 @@ def render_trade_visualization(experiment_dir: Path) -> str:
     }}
     .reason-detail {{ color: var(--muted); font-size: 12px; line-height: 1.35; margin-top: 2px; }}
     .rule-status {{ font-size: 12px; font-weight: 700; margin-bottom: 3px; }}
+    .vote-details summary {{ cursor: pointer; color: var(--accent); font-weight: 700; }}
+    .vote-group {{ margin-top: 10px; }}
+    .vote-group-title {{ color: var(--muted); font-size: 12px; font-weight: 700; margin-bottom: 4px; }}
+    .vote-table {{ min-width: 440px; font-size: 12px; }}
+    .vote-table th, .vote-table td {{ padding: 5px 6px; }}
     .empty {{ color: var(--muted); margin: 8px 0 0; }}
   </style>
 </head>
@@ -218,6 +223,7 @@ def _render_fold_section(
       <th>Entry Rule</th>
       <th>Exit Reason</th>
       <th>Exit Rule</th>
+      <th>Votes</th>
     </tr>
   </thead>
   <tbody>{rows}</tbody>
@@ -330,6 +336,7 @@ def _render_trade_row(index: int, trade: Mapping[str, Any]) -> str:
   <td>{_rule_cell(trade, "entry")}</td>
   <td>{_reason_cell(_exit_reason(trade), EXIT_REASON_DETAILS)}</td>
   <td>{_rule_cell(trade, "exit")}</td>
+  <td>{_vote_details_cell(trade)}</td>
 </tr>"""
 
 
@@ -369,6 +376,68 @@ def _rule_cell(trade: Mapping[str, Any], prefix: str) -> str:
 def _rule_decision(trade: Mapping[str, Any], prefix: str) -> Mapping[str, Any] | None:
     rule = trade.get(f"{prefix}_rule")
     return rule if isinstance(rule, Mapping) else None
+
+
+def _vote_details_cell(trade: Mapping[str, Any]) -> str:
+    entry_votes = _rule_votes(trade, "entry")
+    exit_votes = _rule_votes(trade, "exit")
+    if not entry_votes and not exit_votes:
+        return '<div class="reason-detail">No vote details were recorded.</div>'
+
+    groups = "\n".join(
+        group
+        for group in (
+            _vote_group("Entry votes", entry_votes),
+            _vote_group("Exit votes", exit_votes),
+        )
+        if group
+    )
+    return f"""<details class="vote-details">
+  <summary>Vote details</summary>
+  {groups}
+</details>"""
+
+
+def _vote_group(label: str, votes: Sequence[Mapping[str, Any]]) -> str:
+    if not votes:
+        return ""
+    rows = "\n".join(_vote_row(vote) for vote in votes)
+    return f"""<div class="vote-group">
+  <div class="vote-group-title">{html.escape(label)}</div>
+  <table class="vote-table">
+    <thead>
+      <tr><th>Signal</th><th>Passed</th><th>Detail</th></tr>
+    </thead>
+    <tbody>{rows}</tbody>
+  </table>
+</div>"""
+
+
+def _vote_row(vote: Mapping[str, Any]) -> str:
+    passed = vote.get("passed")
+    if passed is True:
+        status = "true"
+    elif passed is False:
+        status = "false"
+    else:
+        status = "unknown"
+    return (
+        "<tr>"
+        f'<td class="reason-code">{html.escape(str(vote.get("name") or "unknown"))}</td>'
+        f"<td>{html.escape(status)}</td>"
+        f"<td>{html.escape(str(vote.get('detail') or ''))}</td>"
+        "</tr>"
+    )
+
+
+def _rule_votes(trade: Mapping[str, Any], prefix: str) -> Sequence[Mapping[str, Any]]:
+    raw_votes = trade.get(f"{prefix}_votes")
+    if raw_votes is None:
+        rule = _rule_decision(trade, prefix)
+        raw_votes = rule.get("votes") if rule is not None else None
+    if not isinstance(raw_votes, list):
+        return ()
+    return tuple(vote for vote in raw_votes if isinstance(vote, Mapping))
 
 
 def _chart_grid(
