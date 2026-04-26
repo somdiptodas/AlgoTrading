@@ -154,3 +154,12 @@ def test_breakout_up_predicate_votes_when_close_exceeds_prior_high() -> None:
     votes = PREDICATES.generate_votes("breakout_up", history, test, {"window": 3})
 
     assert votes == [SignalVote("breakout_up", True, "close 103.00 > prior high 102.25")]
+
+
+def test_breakout_failed_predicate_votes_when_close_breaks_prior_low() -> None:
+    history = (_bar(0, 103.0), _bar(1, 102.0), _bar(2, 101.0))
+    test = (_bar(3, 100.0),)
+
+    votes = PREDICATES.generate_votes("breakout_failed", history, test, {"window": 3})
+
+    assert votes == [SignalVote("breakout_failed", True, "close 100.00 < prior low 100.75")]

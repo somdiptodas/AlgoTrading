@@ -252,7 +252,7 @@ the checklist in each commit.
   - [x] `ema_trend_down`
 - [ ] Add breakout predicates:
   - [x] `breakout_up`
-  - [ ] `breakout_failed`
+  - [x] `breakout_failed`
 - [ ] Add VWAP predicates:
   - [ ] `vwap_distance`
   - [ ] `vwap_reclaimed`

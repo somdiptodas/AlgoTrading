@@ -41,6 +41,26 @@ def generate_breakout_up_votes(
     return votes
 
 
+def generate_breakout_failed_votes(
+    history_bars: tuple[MarketBar, ...],
+    test_bars: tuple[MarketBar, ...],
+    params: dict[str, object],
+) -> list[SignalVote]:
+    pipeline = FeaturePipeline.from_segments(history_bars, test_bars)
+    lows = pipeline.rolling_low_for_test(int(params["window"]))
+    buffer = 1.0 - float(params["buffer_bps"]) / 10_000.0
+    votes: list[SignalVote] = []
+    for bar, prior_low in zip(test_bars, lows):
+        passed = prior_low is not None and bar.close < prior_low * buffer
+        detail = (
+            "prior low unavailable"
+            if prior_low is None
+            else f"close {bar.close:.2f} < prior low {prior_low * buffer:.2f}"
+        )
+        votes.append(SignalVote("breakout_failed", passed, detail))
+    return votes
+
+
 def register(registry: PredicateRegistry) -> None:
     registry.register(
         "breakout_up",
@@ -48,5 +68,13 @@ def register(registry: PredicateRegistry) -> None:
             normalize_params=normalize_breakout_params,
             required_history=required_history,
             generate_votes=generate_breakout_up_votes,
+        ),
+    )
+    registry.register(
+        "breakout_failed",
+        PredicateHandler(
+            normalize_params=normalize_breakout_params,
+            required_history=required_history,
+            generate_votes=generate_breakout_failed_votes,
         ),
     )
