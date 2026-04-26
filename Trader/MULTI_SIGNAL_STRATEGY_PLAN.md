@@ -349,7 +349,7 @@ the checklist in each commit.
   - [x] best return.
   - [x] trade count.
   - [x] duplicate/reused candidate rate.
-  - [ ] top-performing rule shapes.
+  - [x] top-performing rule shapes.
   - [ ] whether improvement is happening run over run.
 
 ## Initial Success Criteria
