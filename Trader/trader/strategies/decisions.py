@@ -15,3 +15,9 @@ class RuleDecision:
     passed: bool
     reason: str
     votes: tuple[SignalVote, ...] = ()
+
+
+@dataclass(frozen=True)
+class TradeDecision:
+    entry: RuleDecision
+    exit: RuleDecision

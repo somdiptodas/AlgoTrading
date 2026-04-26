@@ -232,10 +232,10 @@ the checklist in each commit.
 
 ### Phase 1: Decision Contract
 
-- [ ] Add immutable decision dataclasses:
+- [x] Add immutable decision dataclasses:
   - [x] `SignalVote`
   - [x] `RuleDecision`
-  - [ ] `TradeDecision`
+  - [x] `TradeDecision`
 - [ ] Add JSON serialization helpers for decision traces.
 - [ ] Add unit tests for serialization and backward compatibility.
 - [ ] Add a compatibility wrapper that converts existing boolean regimes into

@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from trader.strategies.decisions import RuleDecision, SignalVote
+from trader.strategies.decisions import RuleDecision, SignalVote, TradeDecision
 
 
 def test_signal_vote_is_immutable() -> None:
@@ -26,3 +26,14 @@ def test_rule_decision_is_immutable_and_keeps_votes() -> None:
     assert decision.votes == (vote,)
     with pytest.raises(FrozenInstanceError):
         decision.reason = "changed"  # type: ignore[misc]
+
+
+def test_trade_decision_is_immutable_and_keeps_entry_exit_decisions() -> None:
+    entry = RuleDecision(True, "entry passed")
+    exit = RuleDecision(False, "exit blocked")
+    decision = TradeDecision(entry, exit)
+
+    assert decision.entry == entry
+    assert decision.exit == exit
+    with pytest.raises(FrozenInstanceError):
+        decision.exit = RuleDecision(True, "changed")  # type: ignore[misc]
