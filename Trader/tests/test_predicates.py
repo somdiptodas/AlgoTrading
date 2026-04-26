@@ -112,3 +112,20 @@ def test_rsi_above_predicate_votes_when_rsi_is_over_threshold() -> None:
 
     assert [vote.passed for vote in votes] == [True, True]
     assert votes[0].detail == "RSI 91.67 > 70.00"
+
+
+def test_ema_trend_up_predicate_votes_when_fast_ema_is_above_slow_ema() -> None:
+    history = (_bar(0, 100.0), _bar(1, 101.0), _bar(2, 102.0))
+    test = (_bar(3, 110.0),)
+
+    assert PREDICATES.validate_params("ema_trend_up", {"fast": 2, "slow": 3, "buffer_bps": "0"}) == {
+        "fast": 2,
+        "slow": 3,
+        "buffer_bps": 0.0,
+    }
+    assert PREDICATES.required_history("ema_trend_up", {"fast": 2, "slow": 3}) == 3
+    votes = PREDICATES.generate_votes("ema_trend_up", history, test, {"fast": 2, "slow": 3})
+
+    assert votes[0].passed is True
+    assert votes[0].detail.startswith("fast EMA ")
+    assert " > slow EMA " in votes[0].detail
