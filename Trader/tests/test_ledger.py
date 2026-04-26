@@ -175,6 +175,26 @@ def test_trade_payload_includes_optional_decision_trace_fields() -> None:
     assert round_tripped.exit_rule == exit_rule
 
 
+def test_legacy_trade_payload_reads_without_decision_trace_fields() -> None:
+    payload = {
+        "entry_timestamp_utc": "2026-01-05T14:30:00+00:00",
+        "exit_timestamp_utc": "2026-01-05T14:35:00+00:00",
+        "entry_price": 100.0,
+        "exit_price": 101.0,
+        "shares": 10,
+        "bars_held": 5,
+        "pnl_cash": 10.0,
+        "pnl_pct": 1.0,
+        "exit_reason": "signal_flip",
+    }
+
+    trade = trade_from_payload(payload)
+
+    assert trade.entry_reason == "signal_on"
+    assert trade.entry_rule is None
+    assert trade.exit_rule is None
+
+
 def test_ledger_round_trip_and_dedupe(tmp_path: Path) -> None:
     result = _sample_result()
     ledger = LedgerStore(tmp_path / "ledger.db")

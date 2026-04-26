@@ -293,7 +293,7 @@ the checklist in each commit.
 ### Phase 5: Ledger And Artifacts
 
 - [x] Extend `Trade` payloads with optional decision trace fields.
-- [ ] Keep legacy trade payload reads backward compatible.
+- [x] Keep legacy trade payload reads backward compatible.
 - [ ] Persist entry and exit votes to `trades.json`.
 - [ ] Add compact ledger summaries so decision traces do not bloat the ledger DB.
 - [ ] Add tests for old and new artifact payloads.
