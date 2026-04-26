@@ -85,8 +85,8 @@ def test_multi_signal_normalizes_rules_and_child_predicate_params() -> None:
         "entry_rule": {
             "combiner": "all",
             "signals": [
-                {"name": "rsi_below", "params": {"length": 2, "threshold": 30.0}},
                 {"name": "ema_trend_up", "params": {"fast": 2, "slow": 3, "buffer_bps": 0.0}},
+                {"name": "rsi_below", "params": {"length": 2, "threshold": 30.0}},
                 {
                     "name": "vwap_distance",
                     "params": {"side": "below", "min_bps": 10.0, "max_bps": 100_000.0},
@@ -96,8 +96,8 @@ def test_multi_signal_normalizes_rules_and_child_predicate_params() -> None:
         "exit_rule": {
             "combiner": "any",
             "signals": [
-                {"name": "rsi_above", "params": {"length": 2, "threshold": 70.0}},
                 {"name": "ema_trend_down", "params": {"fast": 2, "slow": 3, "buffer_bps": 0.0}},
+                {"name": "rsi_above", "params": {"length": 2, "threshold": 70.0}},
                 {"name": "vwap_reclaimed", "params": {"min_bps": 0.0}},
             ],
         },
@@ -231,6 +231,41 @@ def test_multi_signal_rejects_invalid_k_of_n_rules() -> None:
                 signal=SignalSpec("multi_signal", params),
             )
         )
+
+
+def test_multi_signal_canonicalizes_child_order_for_stable_hashing() -> None:
+    base = StrategySpec(
+        name="multi_signal_order_a",
+        signal=SignalSpec("multi_signal", _multi_signal_params()),
+    )
+    reordered_params = {
+        "entry_rule": {
+            "combiner": "all",
+            "signals": [
+                {"name": "vwap_distance", "params": {"min_bps": "10", "side": "below"}},
+                {"name": "ema_trend_up", "params": {"slow": "3", "fast": "2"}},
+                {"name": "rsi_below", "params": {"threshold": "30", "length": "2"}},
+            ],
+        },
+        "exit_rule": {
+            "combiner": "any",
+            "signals": [
+                {"name": "vwap_reclaimed", "params": {"min_bps": "0"}},
+                {"name": "ema_trend_down", "params": {"slow": "3", "fast": "2"}},
+                {"name": "rsi_above", "params": {"threshold": "70", "length": "2"}},
+            ],
+        },
+    }
+    reordered = StrategySpec(
+        name="multi_signal_order_b",
+        signal=SignalSpec("multi_signal", reordered_params),
+    )
+
+    validated_base = REGISTRY.validate_spec(base)
+    validated_reordered = REGISTRY.validate_spec(reordered)
+
+    assert validated_base.signal.params == validated_reordered.signal.params
+    assert validated_base.spec_hash() == validated_reordered.spec_hash()
 
 
 def test_registry_generate_decisions_wraps_legacy_regimes() -> None:

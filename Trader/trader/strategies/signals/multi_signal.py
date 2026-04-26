@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Sequence
 
 from trader.data.models import MarketBar
@@ -74,7 +75,8 @@ def _normalize_rule(scope: str, raw_rule: object) -> dict[str, object]:
         raw_params = raw_signal.get("params", {})
         if not isinstance(raw_params, dict):
             raise ValueError(f"multi_signal.{scope}.signals[{index}].params must be a dict")
-        signals.append({"name": name, "params": PREDICATES.validate_params(name, raw_params)})
+        signals.append({"name": name, "params": _canonical_params(PREDICATES.validate_params(name, raw_params))})
+    signals = sorted(signals, key=_signal_sort_key)
 
     rule: dict[str, object] = {"combiner": combiner, "signals": signals}
     if combiner == "k_of_n":
@@ -128,3 +130,11 @@ def _reason(combiner: str, passed: bool, passed_count: int, total: int) -> str:
 
 def _status(passed: bool) -> str:
     return "passed" if passed else "failed"
+
+
+def _canonical_params(params: dict[str, object]) -> dict[str, object]:
+    return {key: params[key] for key in sorted(params)}
+
+
+def _signal_sort_key(signal: dict[str, object]) -> str:
+    return json.dumps(signal, sort_keys=True, separators=(",", ":"), allow_nan=False)

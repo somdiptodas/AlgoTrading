@@ -268,7 +268,7 @@ the checklist in each commit.
 - [x] Reject entry rules with fewer than 3 signals.
 - [x] Reject exit rules with fewer than 3 signals.
 - [x] Implement `all`, `any`, and `k_of_n` combiners.
-- [ ] Canonicalize child signal params for stable hashing and dedupe.
+- [x] Canonicalize child signal params for stable hashing and dedupe.
 - [ ] Compute required history as the max required history across entry and exit
       children.
 - [ ] Add tests for asymmetric entry and exit rules.
