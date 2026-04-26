@@ -238,7 +238,7 @@ the checklist in each commit.
   - [x] `TradeDecision`
 - [x] Add JSON serialization helpers for decision traces.
 - [x] Add unit tests for serialization and backward compatibility.
-- [ ] Add a compatibility wrapper that converts existing boolean regimes into
+- [x] Add a compatibility wrapper that converts existing boolean regimes into
       default decision traces.
 
 ### Phase 2: Atomic Signal Predicates

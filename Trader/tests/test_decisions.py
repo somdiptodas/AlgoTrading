@@ -8,6 +8,7 @@ from trader.strategies.decisions import (
     RuleDecision,
     SignalVote,
     TradeDecision,
+    legacy_regime_to_trade_decisions,
     signal_vote_from_payload,
     trade_decision_from_json,
     trade_decision_from_payload,
@@ -85,4 +86,35 @@ def test_decision_payload_readers_accept_legacy_missing_optional_fields() -> Non
     assert trade_decision_from_payload(payload) == TradeDecision(
         entry=RuleDecision(True, "signal_on"),
         exit=RuleDecision(False, "signal_hold"),
+    )
+
+
+def test_legacy_regime_to_trade_decisions_preserves_signal_semantics() -> None:
+    decisions = legacy_regime_to_trade_decisions((False, True))
+
+    assert decisions == (
+        TradeDecision(
+            entry=RuleDecision(
+                False,
+                "signal_off",
+                (SignalVote("legacy_regime", False, "regime is not long"),),
+            ),
+            exit=RuleDecision(
+                True,
+                "signal_flip",
+                (SignalVote("legacy_regime_off", True, "regime is not long"),),
+            ),
+        ),
+        TradeDecision(
+            entry=RuleDecision(
+                True,
+                "signal_on",
+                (SignalVote("legacy_regime", True, "regime is long"),),
+            ),
+            exit=RuleDecision(
+                False,
+                "signal_hold",
+                (SignalVote("legacy_regime_off", False, "regime is long"),),
+            ),
+        ),
     )

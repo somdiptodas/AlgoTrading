@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -92,6 +92,39 @@ def trade_decision_to_json(decision: TradeDecision, *, pretty: bool = False) -> 
 
 def trade_decision_from_json(payload: str | bytes | bytearray) -> TradeDecision:
     return trade_decision_from_payload(dict(json.loads(payload)))
+
+
+def legacy_regime_to_trade_decisions(regime_by_bar: Sequence[bool]) -> tuple[TradeDecision, ...]:
+    decisions: list[TradeDecision] = []
+    for regime_is_long in regime_by_bar:
+        regime_is_long = bool(regime_is_long)
+        decisions.append(
+            TradeDecision(
+                entry=RuleDecision(
+                    passed=regime_is_long,
+                    reason="signal_on" if regime_is_long else "signal_off",
+                    votes=(
+                        SignalVote(
+                            "legacy_regime",
+                            regime_is_long,
+                            "regime is long" if regime_is_long else "regime is not long",
+                        ),
+                    ),
+                ),
+                exit=RuleDecision(
+                    passed=not regime_is_long,
+                    reason="signal_hold" if regime_is_long else "signal_flip",
+                    votes=(
+                        SignalVote(
+                            "legacy_regime_off",
+                            not regime_is_long,
+                            "regime is long" if regime_is_long else "regime is not long",
+                        ),
+                    ),
+                ),
+            )
+        )
+    return tuple(decisions)
 
 
 def _payload_bool(payload: Mapping[str, Any], key: str) -> bool:
