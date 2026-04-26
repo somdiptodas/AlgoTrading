@@ -8,6 +8,7 @@ from trader.strategies.decisions import (
     RuleDecision,
     SignalVote,
     TradeDecision,
+    signal_vote_from_payload,
     trade_decision_from_json,
     trade_decision_from_payload,
     trade_decision_to_json,
@@ -71,3 +72,17 @@ def test_trade_decision_payload_and_json_round_trip() -> None:
     assert trade_decision_from_json(encoded) == decision
     assert '": ' not in encoded
     assert ', "' not in encoded
+
+
+def test_decision_payload_readers_accept_legacy_missing_optional_fields() -> None:
+    vote = signal_vote_from_payload({"name": "legacy_signal", "passed": True})
+    payload = {
+        "entry": {"passed": True, "reason": "signal_on"},
+        "exit": {"passed": False, "reason": "signal_hold"},
+    }
+
+    assert vote == SignalVote("legacy_signal", True)
+    assert trade_decision_from_payload(payload) == TradeDecision(
+        entry=RuleDecision(True, "signal_on"),
+        exit=RuleDecision(False, "signal_hold"),
+    )

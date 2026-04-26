@@ -237,7 +237,7 @@ the checklist in each commit.
   - [x] `RuleDecision`
   - [x] `TradeDecision`
 - [x] Add JSON serialization helpers for decision traces.
-- [ ] Add unit tests for serialization and backward compatibility.
+- [x] Add unit tests for serialization and backward compatibility.
 - [ ] Add a compatibility wrapper that converts existing boolean regimes into
       default decision traces.
 
