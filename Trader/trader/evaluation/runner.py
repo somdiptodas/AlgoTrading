@@ -15,6 +15,7 @@ from trader.evaluation.baselines import (
     buy_and_hold,
     evaluate_baselines,
     randomized_entry_same_exposure,
+    randomized_entry_same_exposure_with_samples,
     regular_session_open_to_close_long,
     session_long_flat_at_close,
 )
@@ -54,6 +55,7 @@ class FoldResult:
     baseline_deltas: dict[str, float]
     warnings: tuple[str, ...]
     backtest: BacktestResult
+    random_entry_return_samples: tuple[float, ...] = tuple()
 
 
 @dataclass(frozen=True)
@@ -194,6 +196,7 @@ class EvaluationRunner:
                 return self._evaluate_preview_folds(
                     neighbor_spec,
                     preview,
+                    include_baselines=False,
                 )[1]
             finally:
                 self._add_phase_timing("robustness_neighbors", started)
@@ -228,10 +231,20 @@ class EvaluationRunner:
                 aggregate_metrics["stage_a_pass"] = 1.0
             self._add_phase_timing("stage_b", started)
         holdout_result = None
+        robustness_checks = dict(robustness.checks)
         if stage in _HOLDOUT_STAGES and preview.holdout_bars:
             started = perf_counter()
             holdout_result = self._evaluate_holdout(preview.spec, preview)
             self._add_phase_timing("stage_b", started)
+            holdout_p_value_pass = holdout_result.metrics.get("p_value_vs_random_entry", 1.0) < 0.10
+            holdout_directional_match = (
+                aggregate_metrics.get("return_pct", 0.0) > 0.0
+                and holdout_result.metrics.get("return_pct", 0.0) > 0.0
+            )
+            robustness_checks["holdout_p_value_pass"] = holdout_p_value_pass
+            robustness_checks["holdout_directional_match"] = holdout_directional_match
+            if not (holdout_p_value_pass and holdout_directional_match):
+                stage = "exploratory"
         return ExperimentResult(
             experiment_id=experiment_id,
             status="completed",
@@ -242,7 +255,7 @@ class EvaluationRunner:
             cost_model_id=preview.cost_model_id,
             aggregate_metrics=aggregate_metrics,
             fold_results=fold_results,
-            robustness_checks=robustness.checks,
+            robustness_checks=robustness_checks,
             promotion_stage=stage,
             holdout_result=holdout_result,
         )
@@ -396,6 +409,7 @@ class EvaluationRunner:
         bars: tuple[MarketBar, ...],
         *,
         data_snapshot_id: str | None = None,
+        include_baselines: bool = True,
     ) -> FoldResult:
         cache_key = (
             spec.spec_hash(),
@@ -404,6 +418,7 @@ class EvaluationRunner:
             fold.train_start_utc,
             fold.test_end_utc,
             len(bars),
+            include_baselines,
         )
         cached = self._fold_result_cache.get(cache_key)
         if cached is not None:
@@ -416,13 +431,25 @@ class EvaluationRunner:
         result = run_long_only_engine(test_bars, regime, spec.exec_config, sizing_fraction)
         metrics = calculate_metrics(result)
         metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
-        baselines = self._evaluate_baselines(
-            spec,
-            fold,
-            test_bars,
-            result.trades,
-            data_snapshot_id=data_snapshot_id,
-        )
+        random_entry_return_samples: tuple[float, ...] = tuple()
+        if include_baselines:
+            baselines, random_entry_return_samples = self._evaluate_baselines(
+                spec,
+                fold,
+                test_bars,
+                result.trades,
+                strategy_return_pct=metrics["return_pct"],
+                data_snapshot_id=data_snapshot_id,
+            )
+            if "randomized_entry_same_exposure" in baselines:
+                metrics["p_value_vs_random_entry"] = baselines["randomized_entry_same_exposure"].get(
+                    "p_value_vs_random_entry",
+                    1.0,
+                )
+            baseline_delta_metrics = baseline_deltas(metrics, baselines)
+        else:
+            baselines = {}
+            baseline_delta_metrics = {}
         fold_result = FoldResult(
             fold_id=fold.fold_id,
             train_start_utc=fold.train_start_utc,
@@ -431,9 +458,10 @@ class EvaluationRunner:
             test_end_utc=fold.test_end_utc,
             metrics=metrics,
             baseline_metrics=baselines,
-            baseline_deltas=baseline_deltas(metrics, baselines),
+            baseline_deltas=baseline_delta_metrics,
             warnings=warnings,
             backtest=result,
+            random_entry_return_samples=random_entry_return_samples,
         )
         self._fold_result_cache[cache_key] = fold_result
         return fold_result
@@ -468,8 +496,9 @@ class EvaluationRunner:
         fold: Fold,
         test_bars: tuple[MarketBar, ...],
         strategy_trades: tuple,
+        strategy_return_pct: float | None = None,
         data_snapshot_id: str | None = None,
-    ) -> dict[str, dict[str, float]]:
+    ) -> tuple[dict[str, dict[str, float]], tuple[float, ...]]:
         fixed_baselines = {
             name: dict(metrics)
             for name, metrics in self._fixed_baselines(
@@ -479,13 +508,15 @@ class EvaluationRunner:
                 data_snapshot_id=data_snapshot_id,
             ).items()
         }
-        fixed_baselines["randomized_entry_same_exposure"] = randomized_entry_same_exposure(
+        randomized_metrics, random_entry_return_samples = randomized_entry_same_exposure_with_samples(
             test_bars,
             spec.exec_config,
             strategy_trades,
             seed_material=f"{spec.spec_hash()}|{fold.fold_id}|{fold.test_start_utc}|{fold.test_end_utc}",
+            strategy_return_pct=strategy_return_pct,
         )
-        return fixed_baselines
+        fixed_baselines["randomized_entry_same_exposure"] = randomized_metrics
+        return fixed_baselines, random_entry_return_samples
 
     def _fixed_baselines(
         self,
@@ -555,12 +586,21 @@ class EvaluationRunner:
         metrics = calculate_metrics(result)
         metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold((result,))
         metrics.update(self._cost_scenario_metrics(spec, test_bars, regime, sizing_fraction, metrics))
-        baselines = evaluate_baselines(
+        randomized_metrics, random_entry_return_samples = randomized_entry_same_exposure_with_samples(
             test_bars,
             spec.exec_config,
-            strategy_trades=result.trades,
+            result.trades,
             seed_material=f"{spec.spec_hash()}|holdout|{test_bars[0].timestamp_utc}|{test_bars[-1].timestamp_utc}",
+            strategy_return_pct=metrics["return_pct"],
         )
+        metrics["p_value_vs_random_entry"] = randomized_metrics["p_value_vs_random_entry"]
+        baselines = {
+            "always_flat": always_flat(spec.exec_config.initial_cash),
+            "buy_and_hold": buy_and_hold(test_bars, spec.exec_config.initial_cash),
+            "regular_session_open_to_close_long": regular_session_open_to_close_long(test_bars, spec.exec_config),
+            "session_long_flat_at_close": session_long_flat_at_close(test_bars, spec.exec_config),
+            "randomized_entry_same_exposure": randomized_metrics,
+        }
         return FoldResult(
             fold_id="holdout",
             train_start_utc=train_bars[0].timestamp_utc if train_bars else "",
@@ -572,6 +612,7 @@ class EvaluationRunner:
             baseline_deltas=baseline_deltas(metrics, baselines),
             warnings=warnings,
             backtest=result,
+            random_entry_return_samples=random_entry_return_samples,
         )
 
     def _cost_scenario_metrics(
@@ -614,6 +655,8 @@ class EvaluationRunner:
         self,
         spec: StrategySpec,
         preview: EvaluationPreview,
+        *,
+        include_baselines: bool = True,
     ) -> tuple[tuple[FoldResult, ...], dict[str, float]]:
         fold_results = tuple(
             self._evaluate_fold(
@@ -621,6 +664,7 @@ class EvaluationRunner:
                 fold,
                 preview.data_slice.bars,
                 data_snapshot_id=preview.data_slice.snapshot_id,
+                include_baselines=include_baselines,
             )
             for fold in preview.folds
         )
@@ -636,6 +680,10 @@ class EvaluationRunner:
         )
         aggregate_metrics["information_ratio_vs_buy_and_hold"] = information_ratio_vs_buy_and_hold(
             [fold.backtest for fold in fold_results]
+        )
+        aggregate_metrics["p_value_vs_random_entry"] = _aggregate_random_entry_p_value(
+            aggregate_metrics.get("return_pct", 0.0),
+            fold_results,
         )
         return aggregate_metrics
 
@@ -781,3 +829,24 @@ def _raw_warning_bounds(bars: tuple[MarketBar, ...]) -> tuple[int, int]:
         session_end = last_local.replace(hour=15, minute=59, second=0, microsecond=0)
         end_ms = int(session_end.timestamp() * 1000)
     return start_ms, end_ms
+
+
+def _aggregate_random_entry_p_value(strategy_return_pct: float, fold_results: Sequence[FoldResult]) -> float:
+    if not fold_results:
+        return 1.0
+    sample_count = min((len(fold.random_entry_return_samples) for fold in fold_results if fold.random_entry_return_samples), default=0)
+    if sample_count <= 0:
+        return 1.0
+    weights = [len(fold.backtest.bars) for fold in fold_results]
+    total_weight = sum(weights)
+    if total_weight <= 0:
+        return 1.0
+    meet_or_beat_count = 0
+    for sample_index in range(sample_count):
+        sampled_return = sum(
+            (fold.random_entry_return_samples[sample_index] if fold.random_entry_return_samples else 0.0) * weight
+            for fold, weight in zip(fold_results, weights)
+        ) / total_weight
+        if sampled_return >= strategy_return_pct:
+            meet_or_beat_count += 1
+    return (1.0 + meet_or_beat_count) / (1.0 + sample_count)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 MIN_PROMOTION_TRADE_COUNT = 10.0
 MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD = 0.5
+MAX_P_VALUE_VS_RANDOM_ENTRY = 0.10
 _REQUIRED_ROBUSTNESS_CHECKS = (
     "fold_consistency_pass",
     "regime_pass",
@@ -27,6 +28,8 @@ def promotion_stage(
     beats_relevant_benchmark = exposure_adjusted_edge_pct > 0.0
     information_ratio = aggregate_metrics.get("information_ratio_vs_buy_and_hold", -999.0)
     consistent_benchmark_edge = information_ratio > MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD
+    random_entry_p_value = aggregate_metrics.get("p_value_vs_random_entry", 1.0)
+    beats_random_entry = random_entry_p_value < MAX_P_VALUE_VS_RANDOM_ENTRY
     if not (
         robust
         and positive_return
@@ -34,6 +37,7 @@ def promotion_stage(
         and enough_trades
         and beats_relevant_benchmark
         and consistent_benchmark_edge
+        and beats_random_entry
     ):
         return "exploratory"
 

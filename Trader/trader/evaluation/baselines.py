@@ -12,6 +12,8 @@ from trader.execution.engine import BacktestResult, run_long_only_engine
 from trader.execution.fills import Trade, enter_long, exit_long
 from trader.strategies.spec import ExecConfig
 
+RANDOM_ENTRY_BOOTSTRAP_RESAMPLES = 500
+
 
 def evaluate_baselines(
     bars: tuple[MarketBar, ...],
@@ -19,6 +21,7 @@ def evaluate_baselines(
     *,
     strategy_trades: tuple[Trade, ...],
     seed_material: str,
+    strategy_return_pct: float | None = None,
 ) -> dict[str, dict[str, float]]:
     return {
         "always_flat": always_flat(exec_config.initial_cash),
@@ -30,6 +33,7 @@ def evaluate_baselines(
             exec_config,
             strategy_trades,
             seed_material=seed_material,
+            strategy_return_pct=strategy_return_pct,
         ),
     }
 
@@ -117,16 +121,64 @@ def randomized_entry_same_exposure(
     strategy_trades: tuple[Trade, ...],
     *,
     seed_material: str,
+    strategy_return_pct: float | None = None,
+    resample_count: int = RANDOM_ENTRY_BOOTSTRAP_RESAMPLES,
 ) -> dict[str, float]:
+    metrics, _ = randomized_entry_same_exposure_with_samples(
+        bars,
+        exec_config,
+        strategy_trades,
+        seed_material=seed_material,
+        strategy_return_pct=strategy_return_pct,
+        resample_count=resample_count,
+    )
+    return metrics
+
+
+def randomized_entry_same_exposure_with_samples(
+    bars: tuple[MarketBar, ...],
+    exec_config: ExecConfig,
+    strategy_trades: tuple[Trade, ...],
+    *,
+    seed_material: str,
+    strategy_return_pct: float | None = None,
+    resample_count: int = RANDOM_ENTRY_BOOTSTRAP_RESAMPLES,
+) -> tuple[dict[str, float], tuple[float, ...]]:
     trade_targets = tuple(
         (_trade_session_date(trade.entry_timestamp_utc), max(1, trade.bars_held))
         for trade in strategy_trades
         if trade.bars_held > 0
     )
     if not bars or not trade_targets:
-        return always_flat(exec_config.initial_cash)
+        metrics = always_flat(exec_config.initial_cash)
+        metrics["p_value_vs_random_entry"] = 1.0
+        metrics["bootstrap_sample_count"] = 0.0
+        return metrics, tuple()
 
-    rng = random.Random(_random_seed(bars, trade_targets, seed_material))
+    rng = random.Random(_random_seed(bars, trade_targets, f"{seed_material}|single"))
+    metrics = _single_randomized_entry_metrics(bars, exec_config, trade_targets, rng)
+    samples = _daily_block_bootstrap_returns(
+        bars,
+        exec_config,
+        trade_targets,
+        seed_material=f"{seed_material}|bootstrap",
+        sample_count=resample_count,
+    )
+    metrics["bootstrap_sample_count"] = float(len(samples))
+    if strategy_return_pct is None or not samples:
+        metrics["p_value_vs_random_entry"] = 1.0
+    else:
+        meet_or_beat_count = sum(1 for sample_return in samples if sample_return >= strategy_return_pct)
+        metrics["p_value_vs_random_entry"] = (1.0 + meet_or_beat_count) / (1.0 + len(samples))
+    return metrics, samples
+
+
+def _single_randomized_entry_metrics(
+    bars: tuple[MarketBar, ...],
+    exec_config: ExecConfig,
+    trade_targets: tuple[tuple[str, int], ...],
+    rng: random.Random,
+) -> dict[str, float]:
     expected_trade_count = float(len(trade_targets))
     expected_exposure_pct = (sum(hold for _, hold in trade_targets) / len(bars)) * 100.0
     for attempt in range(65):
@@ -155,6 +207,9 @@ def baseline_deltas(metrics: dict[str, float], baselines: dict[str, dict[str, fl
         deltas["delta_exposure_adjusted_buy_and_hold_pct"] = metrics["return_pct"] - (
             (metrics.get("exposure_pct", 0.0) / 100.0) * baselines["buy_and_hold"]["return_pct"]
         )
+    randomized_entry = baselines.get("randomized_entry_same_exposure", {})
+    if "p_value_vs_random_entry" in randomized_entry:
+        deltas["p_value_vs_random_entry"] = randomized_entry["p_value_vs_random_entry"]
     return deltas
 
 
@@ -239,6 +294,69 @@ def _random_session_windows(
         windows.append((cursor, exit_idx, hold))
         cursor = exit_idx + 1 + gaps[index + 1]
     return windows
+
+
+def _daily_block_bootstrap_returns(
+    bars: tuple[MarketBar, ...],
+    exec_config: ExecConfig,
+    trade_targets: tuple[tuple[str, int], ...],
+    *,
+    seed_material: str,
+    sample_count: int,
+) -> tuple[float, ...]:
+    session_ranges = _session_ranges(bars)
+    if not session_ranges or sample_count <= 0:
+        return tuple()
+    rng = random.Random(_random_seed(bars, trade_targets, seed_material))
+    holds_by_session = _holds_by_session(trade_targets)
+    returns: list[float] = []
+    for _ in range(sample_count):
+        sampled_bars: list[MarketBar] = []
+        windows: list[tuple[int, int, int]] = []
+        cursor = 0
+        for start, end in (rng.choice(session_ranges) for _ in session_ranges):
+            session_bars = bars[start:end]
+            session_length = len(session_bars)
+            sampled_bars.extend(session_bars)
+            holds = holds_by_session.get(session_bars[0].session_date, [])
+            if holds:
+                session_windows = _random_session_windows(
+                    cursor,
+                    cursor + session_length,
+                    holds,
+                    rng,
+                    randomize=True,
+                )
+                if len(session_windows) == len(holds):
+                    windows.extend(session_windows)
+            cursor += session_length
+        returns.append(_simulate_window_return_pct(tuple(sampled_bars), exec_config, sorted(windows)))
+    return tuple(returns)
+
+
+def _simulate_window_return_pct(
+    bars: tuple[MarketBar, ...],
+    exec_config: ExecConfig,
+    windows: list[tuple[int, int, int]],
+) -> float:
+    if not bars:
+        return 0.0
+    cash = exec_config.initial_cash
+    active = None
+    by_entry = {entry_idx: (exit_idx, hold) for entry_idx, exit_idx, hold in windows}
+    for index, bar in enumerate(bars):
+        if active is None and index in by_entry:
+            exit_idx, hold = by_entry[index]
+            cash, position = enter_long(cash, bar, exec_config, sizing_fraction=1.0)
+            if position is not None:
+                position.bars_held = hold
+                active = (exit_idx, position)
+        if active is not None:
+            exit_idx, position = active
+            if index == exit_idx:
+                cash, _ = exit_long(cash, position, bar, exec_config, "randomized_exit", fill_at_close=True)
+                active = None
+    return ((cash / exec_config.initial_cash) - 1.0) * 100.0
 
 
 def _simulate_windows(

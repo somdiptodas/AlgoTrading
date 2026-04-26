@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from trader.evaluation.promotion import (
+    MAX_P_VALUE_VS_RANDOM_ENTRY,
     MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD,
     MIN_PROMOTION_TRADE_COUNT,
     promotion_stage,
@@ -21,6 +22,7 @@ def _metrics(**overrides: float) -> dict[str, float]:
         "delta_buy_and_hold_return_pct": -10.0,
         "delta_exposure_adjusted_buy_and_hold_pct": 0.25,
         "information_ratio_vs_buy_and_hold": MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD + 0.1,
+        "p_value_vs_random_entry": MAX_P_VALUE_VS_RANDOM_ENTRY - 0.01,
     }
     metrics.update(overrides)
     return metrics
@@ -51,6 +53,8 @@ def test_missing_robustness_stays_exploratory() -> None:
         {"delta_exposure_adjusted_buy_and_hold_pct": -0.1},
         {"information_ratio_vs_buy_and_hold": MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD},
         {"information_ratio_vs_buy_and_hold": MIN_INFORMATION_RATIO_VS_BUY_AND_HOLD - 0.1},
+        {"p_value_vs_random_entry": MAX_P_VALUE_VS_RANDOM_ENTRY},
+        {"p_value_vs_random_entry": MAX_P_VALUE_VS_RANDOM_ENTRY + 0.01},
     ),
 )
 def test_edge_failures_stay_exploratory(metric_overrides: dict[str, float]) -> None:

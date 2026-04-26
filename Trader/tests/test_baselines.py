@@ -6,9 +6,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trader.data.models import MarketBar
-from trader.evaluation.runner import EvaluationRunner
+from trader.evaluation.runner import EvaluationRunner, FoldResult, _aggregate_random_entry_p_value
 from trader.evaluation.splits import Fold
-from trader.evaluation.baselines import evaluate_baselines
+from trader.evaluation.baselines import baseline_deltas, evaluate_baselines, randomized_entry_same_exposure
 from trader.execution.engine import BacktestResult
 from trader.execution.fills import Trade
 from trader.strategies.spec import ExecConfig, SignalSpec, StrategySpec
@@ -172,6 +172,91 @@ def test_intraday_baselines_are_present_and_session_bounded() -> None:
     assert baselines["session_long_flat_at_close"]["trade_count"] == 2.0
 
 
+def test_randomized_entry_reports_deterministic_bootstrap_p_value() -> None:
+    bars = _priced_single_session_bars((100.0, 99.0, 98.0, 97.0, 96.0, 95.0))
+    reference = _same_session_reference(bars)
+
+    first = randomized_entry_same_exposure(
+        bars,
+        ExecConfig(initial_cash=100_000.0),
+        reference.trades,
+        seed_material="bootstrap-seed",
+        strategy_return_pct=((reference.final_cash / reference.initial_cash) - 1.0) * 100.0,
+        resample_count=20,
+    )
+    second = randomized_entry_same_exposure(
+        bars,
+        ExecConfig(initial_cash=100_000.0),
+        reference.trades,
+        seed_material="bootstrap-seed",
+        strategy_return_pct=((reference.final_cash / reference.initial_cash) - 1.0) * 100.0,
+        resample_count=20,
+    )
+
+    assert first == second
+    assert first["bootstrap_sample_count"] == 20.0
+    assert 0.0 <= first["p_value_vs_random_entry"] <= 1.0
+
+
+def test_baseline_deltas_include_random_entry_p_value() -> None:
+    deltas = baseline_deltas(
+        {"return_pct": 1.0, "annualized_sharpe": 1.0, "sharpe_like": 0.5, "exposure_pct": 10.0},
+        {
+            "randomized_entry_same_exposure": {
+                "return_pct": 0.5,
+                "annualized_sharpe": 0.1,
+                "sharpe_like": 0.2,
+                "p_value_vs_random_entry": 0.08,
+            }
+        },
+    )
+
+    assert deltas["p_value_vs_random_entry"] == 0.08
+
+
+def test_aggregate_random_entry_p_value_keeps_zero_sample_fold_weight() -> None:
+    bars = _single_session_bars(4)
+    fold_with_samples = FoldResult(
+        fold_id="fold_1",
+        train_start_utc=bars[0].timestamp_utc,
+        train_end_utc=bars[0].timestamp_utc,
+        test_start_utc=bars[0].timestamp_utc,
+        test_end_utc=bars[-1].timestamp_utc,
+        metrics={"return_pct": 1.0},
+        baseline_metrics={},
+        baseline_deltas={},
+        warnings=tuple(),
+        backtest=BacktestResult(
+            bars=bars,
+            trades=tuple(),
+            equity_curve=tuple(100_000.0 for _ in bars),
+            initial_cash=100_000.0,
+            final_cash=100_000.0,
+        ),
+        random_entry_return_samples=(4.0, 4.0),
+    )
+    fold_without_samples = FoldResult(
+        fold_id="fold_2",
+        train_start_utc=bars[0].timestamp_utc,
+        train_end_utc=bars[0].timestamp_utc,
+        test_start_utc=bars[0].timestamp_utc,
+        test_end_utc=bars[-1].timestamp_utc,
+        metrics={"return_pct": 0.0},
+        baseline_metrics={},
+        baseline_deltas={},
+        warnings=tuple(),
+        backtest=BacktestResult(
+            bars=bars,
+            trades=tuple(),
+            equity_curve=tuple(100_000.0 for _ in bars),
+            initial_cash=100_000.0,
+            final_cash=100_000.0,
+        ),
+    )
+
+    assert _aggregate_random_entry_p_value(3.0, (fold_with_samples, fold_without_samples)) == pytest.approx(1 / 3)
+
+
 def test_runner_caches_fixed_fold_baselines_but_not_randomized_entry(monkeypatch) -> None:
     bars = _bars()
     fold = _fold(bars)
@@ -196,7 +281,7 @@ def test_runner_caches_fixed_fold_baselines_but_not_randomized_entry(monkeypatch
 
     def randomized(*args, **kwargs):
         calls["randomized_entry_same_exposure"] += 1
-        return _baseline_metrics(5.0)
+        return _baseline_metrics(5.0), (0.1, 0.2)
 
     monkeypatch.setattr("trader.evaluation.runner.always_flat", count_fixed("always_flat", 0.0))
     monkeypatch.setattr("trader.evaluation.runner.buy_and_hold", count_fixed("buy_and_hold", 1.0))
@@ -208,7 +293,7 @@ def test_runner_caches_fixed_fold_baselines_but_not_randomized_entry(monkeypatch
         "trader.evaluation.runner.session_long_flat_at_close",
         count_fixed("session_long_flat_at_close", 3.0),
     )
-    monkeypatch.setattr("trader.evaluation.runner.randomized_entry_same_exposure", randomized)
+    monkeypatch.setattr("trader.evaluation.runner.randomized_entry_same_exposure_with_samples", randomized)
 
     first = runner._evaluate_fold(
         StrategySpec(name="cache_one", signal=SignalSpec("ema_cross", {"fast_length": 2, "slow_length": 3})),
