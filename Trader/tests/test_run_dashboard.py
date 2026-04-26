@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from trader.reporting.run_dashboard import ReportPathConventions, write_run_report_from_json
+from trader.reporting.run_dashboard import ReportPathConventions, write_dashboard, write_run_report_from_json
 
 
 def test_report_path_conventions_are_stable(tmp_path: Path) -> None:
@@ -112,3 +112,57 @@ def test_write_run_report_from_json_renders_loop_and_experiment_links(tmp_path: 
     assert "Top Candidates" in html
     assert "Failed Candidates" in html
     assert "planning" in html
+
+
+def test_write_dashboard_lists_runs_newest_first_with_report_and_artifact_links(tmp_path: Path) -> None:
+    paths = ReportPathConventions(
+        reports_dir=tmp_path / "reports",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    paths.run_reports_dir.mkdir(parents=True)
+    for run_id, experiment_id, completed_at in (
+        ("run_old", "exp_old", "2026-04-25T10:00:00+00:00"),
+        ("run_new", "exp_new", "2026-04-26T10:00:00+00:00"),
+    ):
+        experiment_dir = paths.experiment_artifact_dir(experiment_id)
+        experiment_dir.mkdir(parents=True)
+        paths.run_html_path(run_id).write_text(f"<html>{run_id}</html>\n", encoding="utf-8")
+        paths.experiment_markdown_path(experiment_id).write_text(f"# {experiment_id}\n", encoding="utf-8")
+        paths.experiment_trade_html_path(experiment_id).write_text("<html>trades</html>\n", encoding="utf-8")
+        for name in ("manifest.json", "spec.json", "trades.json", "equity.json"):
+            (experiment_dir / name).write_text("{}", encoding="utf-8")
+        (experiment_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "spec": {"signal": {"name": "multi_signal"}},
+                    "promotion_stage": "candidate",
+                    "aggregate_metrics": {"return_pct": 1.0, "trade_count": 3},
+                }
+            ),
+            encoding="utf-8",
+        )
+        paths.loop_json_path(run_id).write_text(
+            json.dumps(
+                {
+                    "loop_run_id": run_id,
+                    "completed_at_utc": completed_at,
+                    "planned": 4,
+                    "completed": 1,
+                    "counts": {"previewed": 2, "selected": 1, "duplicate": 0, "suppressed": 0},
+                    "experiments": [{"experiment_id": experiment_id}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    output = write_dashboard(paths)
+
+    assert output == paths.dashboard_path
+    html = output.read_text(encoding="utf-8")
+    assert "Research Loop Dashboard" in html
+    assert html.index("Loop Run run_new") < html.index("Loop Run run_old")
+    assert 'href="loop_runs/run_new.html"' in html
+    assert 'href="loop_runs/run_new.json"' in html
+    assert 'href="exp_new_trades.html"' in html
+    assert 'href="exp_new.md"' in html
+    assert 'href="../artifacts/exp_new/result.json"' in html

@@ -304,7 +304,7 @@ the checklist in each commit.
       experiment HTML files.
 - [x] Generate one HTML report per loop run from loop JSON and ledger/artifact
       data.
-- [ ] Add a main dashboard page that lists all loop runs and links to generated
+- [x] Add a main dashboard page that lists all loop runs and links to generated
       run reports, experiment trade reports, markdown reports, loop JSON, and
       raw artifacts.
 - [ ] Add a CLI command to rebuild all generated reporting HTML from existing

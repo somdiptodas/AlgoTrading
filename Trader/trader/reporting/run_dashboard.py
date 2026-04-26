@@ -61,6 +61,53 @@ def write_run_report_from_json(loop_json_path: Path, paths: ReportPathConvention
     return output_path
 
 
+def write_dashboard(paths: ReportPathConventions) -> Path:
+    output_path = paths.dashboard_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(render_dashboard(paths, output_path=output_path), encoding="utf-8")
+    return output_path
+
+
+def render_dashboard(paths: ReportPathConventions, *, output_path: Path | None = None) -> str:
+    target_path = output_path or paths.dashboard_path
+    runs = _loop_run_records(paths)
+    body = "\n".join(
+        [
+            "<h1>Research Loop Dashboard</h1>",
+            f'<p class="muted">{len(runs)} loop runs found under <code>{html.escape(str(paths.run_reports_dir))}</code>.</p>',
+            _render_dashboard_runs(runs, paths, target_path),
+        ]
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Research Loop Dashboard</title>
+  <style>
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172026; background: #f7f8fa; }}
+    main {{ max-width: 1180px; margin: 0 auto; padding: 32px 24px 48px; }}
+    h1, h2 {{ margin: 0 0 12px; }}
+    h1 {{ font-size: 30px; }}
+    h2 {{ font-size: 20px; margin-top: 28px; }}
+    .muted {{ color: #62717d; }}
+    section {{ background: #ffffff; border: 1px solid #dce3e8; border-radius: 8px; padding: 18px; margin-top: 16px; overflow-x: auto; }}
+    table {{ border-collapse: collapse; width: 100%; font-size: 14px; }}
+    th, td {{ border-bottom: 1px solid #e8edf1; padding: 9px 8px; text-align: left; vertical-align: top; }}
+    th {{ color: #42515c; font-weight: 650; background: #fbfcfd; }}
+    a {{ color: #0f6cbd; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .missing {{ color: #8a5a00; }}
+  </style>
+</head>
+<body>
+<main>
+{body}
+</main>
+</body>
+</html>
+"""
+
+
 def render_run_report(
     loop_payload: Mapping[str, Any],
     paths: ReportPathConventions,
@@ -136,6 +183,30 @@ def _read_json_if_exists(path: Path) -> dict[str, Any]:
     return _read_json(path)
 
 
+def _loop_run_records(paths: ReportPathConventions) -> list[dict[str, Any]]:
+    if not paths.run_reports_dir.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for json_path in sorted(paths.run_reports_dir.glob("*.json")):
+        payload = _read_json(json_path)
+        records.append(
+            {
+                "payload": payload,
+                "json_path": json_path,
+                "sort_key": _run_sort_key(payload, json_path),
+            }
+        )
+    return sorted(records, key=lambda item: item["sort_key"], reverse=True)
+
+
+def _run_sort_key(loop_payload: Mapping[str, Any], json_path: Path) -> str:
+    for key in ("completed_at_utc", "run_completed_at_utc", "generated_at_utc", "started_at_utc"):
+        value = loop_payload.get(key)
+        if value:
+            return str(value)
+    return str(json_path.stat().st_mtime_ns)
+
+
 def _experiment_summaries(
     loop_payload: Mapping[str, Any],
     paths: ReportPathConventions,
@@ -209,10 +280,50 @@ def _render_artifact_links(loop_json_path: Path | None, output_path: Path) -> st
     )
 
 
+def _render_dashboard_runs(
+    runs: Sequence[Mapping[str, Any]],
+    paths: ReportPathConventions,
+    output_path: Path,
+) -> str:
+    if not runs:
+        return '<section><h2>Loop Runs</h2><p>No loop JSON files found.</p></section>'
+    sections = []
+    for record in runs:
+        payload = dict(record["payload"])
+        loop_run_id = _loop_run_id(payload)
+        counts = dict(payload.get("counts") or {})
+        experiments = _experiment_summaries(payload, paths)
+        promoted = sum(1 for item in experiments if item.get("promotion_stage") in PROMOTED_STAGES)
+        sections.append(
+            "<section>"
+            f"<h2>Loop Run {html.escape(loop_run_id)}</h2>"
+            "<p>"
+            f"{_link_or_unavailable('Run HTML', paths.run_html_path(loop_run_id), output_path)} | "
+            f"{_link_or_unavailable('Loop JSON', Path(record['json_path']), output_path)}"
+            "</p>"
+            "<table>"
+            "<thead><tr><th>Planned</th><th>Previewed</th><th>Selected</th><th>Completed</th><th>Duplicate/Reused</th><th>Suppressed</th><th>Promoted</th></tr></thead>"
+            "<tbody><tr>"
+            f"<td>{html.escape(str(payload.get('planned', counts.get('planned', 0))))}</td>"
+            f"<td>{html.escape(str(counts.get('previewed', 0)))}</td>"
+            f"<td>{html.escape(str(counts.get('selected', payload.get('accepted', 0))))}</td>"
+            f"<td>{html.escape(str(payload.get('completed', counts.get('evaluated', 0))))}</td>"
+            f"<td>{html.escape(str(counts.get('duplicate', payload.get('reused', 0))))}</td>"
+            f"<td>{html.escape(str(counts.get('suppressed', 0)))}</td>"
+            f"<td>{promoted}</td>"
+            "</tr></tbody></table>"
+            f"{_render_experiment_table(experiments, paths, output_path, wrap=False)}"
+            "</section>"
+        )
+    return "\n".join(sections)
+
+
 def _render_experiment_table(
     experiments: Sequence[Mapping[str, Any]],
     paths: ReportPathConventions,
     output_path: Path,
+    *,
+    wrap: bool = True,
 ) -> str:
     rows = []
     for item in experiments:
@@ -238,13 +349,14 @@ def _render_experiment_table(
             "</tr>"
         )
     body = "\n".join(rows) if rows else '<tr><td colspan="8">No completed experiments recorded for this run.</td></tr>'
-    return f"""<section>
-<h2>Completed Experiments</h2>
+    table = f"""<h2>Completed Experiments</h2>
 <table>
   <thead><tr><th>Experiment</th><th>Family</th><th>Stage</th><th>Return</th><th>Sharpe-like</th><th>Drawdown</th><th>Trades</th><th>Files</th></tr></thead>
   <tbody>{body}</tbody>
-</table>
-</section>"""
+</table>"""
+    if not wrap:
+        return table.replace("<h2>", "<h3>", 1).replace("</h2>", "</h3>", 1)
+    return f"<section>{table}</section>"
 
 
 def _render_frontier(frontier: object) -> str:
