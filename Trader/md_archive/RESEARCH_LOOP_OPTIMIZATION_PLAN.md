@@ -1,6 +1,6 @@
 # Research Loop Optimization Plan
 
-Date: 2026-04-25 (rev 2 — Claude audit + multi-signal direction)
+Date: 2026-04-26 (rev 3 — consolidated follow-up items)
 
 ## Audit Snapshot (what the system currently shows)
 
@@ -353,6 +353,14 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
   - Completed: 2026-04-25
   - Implementation: Robustness now evaluates the three deterministic highest-delta neighbors, reports median return/Sharpe plus exact bootstrap-median CI fields, and gates neighborhood stability on both median gaps and conservative CI-high gaps.
   - Verification: focused robustness/promotion/report/cost tests passed (`.venv/bin/pytest -q tests/test_robustness.py tests/test_promotion.py tests/test_ledger.py tests/test_costs.py`); full suite passed (`.venv/bin/pytest -q`); read-only verifier found no blockers in the S7 implementation and confirmed unrelated follow-up/data working-tree changes should stay out of this commit.
+- [ ] **Update ledger top-experiment ranking to use `delta_exposure_adjusted_buy_and_hold_pct`**. Current SQLite scalar ranking still uses raw `delta_buy_and_hold_return_pct`, which can favour high-exposure bull-market strategies even though promotion now gates on the exposure-adjusted metric. Update the indexed ranking column and `LedgerQueryHelper._composite_score` once enough new rows carry the adjusted field.
+- [ ] **Rebuild stale `critic_memory.json` from ledger at loop startup** instead of loading the persisted file as-is. If the file is malformed or was written from a different ledger state, region penalties will be wrong for the current run. Add a staleness check (ledger row count vs. memory record count) and reseed when diverged.
+- [ ] **Add full loop integration test** verifying a mixed batch writes both Stage-A-passed survivor artifacts and `stage_a_suppressed` suppression-log rows in the same run.
+- [ ] **Add per-loop `generator_kind` mix to CLI output** so future runs can detect mode collapse explicitly. The current loop completed experiments with `composite_grid` dominating >50% of completions and zero `frontier_neighborhood` or `optuna_tpe` completions — that imbalance was invisible in the summary output.
+- [ ] **Add smoke assertion** that frontier-utility generators (`frontier_neighborhood`, `optuna_tpe`) are represented in completed batches whenever enabled, since a multi-iteration window can produce zero completions from those generators while the summary shows no error.
+- [ ] **Decide `trades.json` standalone reconstruction story**. Exact per-minute equity reconstruction currently still requires bars and config from `result.json` in addition to the cost fields now stored in `trades.json`. Either make `trades.json` fully self-contained for reconstruction or document that `result.json` is always required as the companion file.
+- [ ] **Add regression test** proving aggregate `information_ratio_vs_buy_and_hold` is recomputed from pooled daily active returns across fold backtests, not averaged from fold-level IR values.
+- [ ] **Add explicit planner/search-exhaustion warning** when a loop plans only duplicate specs and reaches `previewed=0`. Long runs should fail visibly into "expand search space" work rather than silently completing zero experiments.
 
 ### P3 — open new search modes
 
@@ -363,6 +371,10 @@ Ordered by impact-per-day-of-work. P0 = blocker, P1 = high impact, P2 = improves
 - [ ] **Latency budget assertion** (F2).
 - [ ] **Nightly decay + reconciliation jobs** (F3, F4).
 - [ ] **Tighten artifact retention**: keep only top-K by recent return + all promoted; archive others to compressed tarballs.
+- [ ] **Add explicit negated filter mode** so `ema_cross AND NOT day_type=trend` can be represented exactly in `FilterSpec`. The current composite planner approximates this with `day_type=mean_reversion`, which does not cover all non-trend days.
+- [ ] **Benchmark NumPy indicator path** on real fold sizes (~60–80 K bars). If EMA/RSI recursive primitives remain a hotspot after rolling-window and regime-helper vectorization, consider a dedicated Cython or Numba accelerator for those recurrences.
+- [ ] **Benchmark ProcessPool Stage B** with real batch sizes to confirm that `EvaluationPreview` pickling overhead does not erase the expected wall-clock speedup under the current multiprocessing transport.
+- [ ] **Add novelty-expansion path** triggered when the planner produces only duplicate specs and `previewed=0`. Options: force a random grid restart in an unexplored region, widen the suppressor radius temporarily, or introduce a new signal family. The last two loop iterations exhausted the current search space and completed zero experiments.
 
 ## Recommended Implementation Order
 

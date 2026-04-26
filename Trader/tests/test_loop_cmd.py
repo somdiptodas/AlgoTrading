@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES
-from trader.cli.loop_cmd import _add_timing, _max_preview_count, _new_timings, _planned_spec_count, _suppression_audit_types, _timing_payload
+from trader.cli.loop_cmd import _active_data_snapshot_id, _add_timing, _current_snapshot_entries, _max_preview_count, _new_timings, _planned_spec_count, _suppression_audit_types, _timing_payload
 from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _load_or_seed_critic_memory, _mark_stage_a_passed, _prescreen_stage_a_candidates, _stage_b_worker_count, build_parser
 from trader.evaluation.runner import ExperimentResult
 from trader.research.suppressor import SuppressedSpec
@@ -54,6 +54,69 @@ def test_loop_signal_family_accepts_composite() -> None:
     args = build_parser().parse_args(["--signal-family", "composite"])
 
     assert args.signal_family == ["composite"]
+
+
+def test_loop_signal_family_accepts_vwap_deviation_as_opt_in() -> None:
+    args = build_parser().parse_args(["--signal-family", "vwap_deviation"])
+
+    assert args.signal_family == ["vwap_deviation"]
+
+
+def test_active_data_snapshot_id_uses_evaluation_preview_research_slice() -> None:
+    calls = []
+
+    class FakeRunner:
+        def preview_walk_forward(self, spec, *, num_folds, embargo_bars, locked_holdout_months):
+            calls.append(
+                {
+                    "spec_name": spec.name,
+                    "num_folds": num_folds,
+                    "embargo_bars": embargo_bars,
+                    "locked_holdout_months": locked_holdout_months,
+                }
+            )
+            return SimpleNamespace(data_slice=SimpleNamespace(snapshot_id="active_snapshot"))
+
+    assert _active_data_snapshot_id(
+        FakeRunner(),
+        num_folds=3,
+        embargo_bars=1,
+        locked_holdout_months=2,
+    ) == "active_snapshot"
+    assert calls == [
+        {
+            "spec_name": "snapshot_probe",
+            "num_folds": 3,
+            "embargo_bars": 1,
+            "locked_holdout_months": 2,
+        }
+    ]
+
+
+def test_current_snapshot_entries_filters_stale_entries_and_keeps_distinct_costs() -> None:
+    entries = (
+        SimpleNamespace(experiment_id="old", data_snapshot_id="old_snapshot", spec="old_spec", cost_model_id="cost_a"),
+        SimpleNamespace(experiment_id="active_a", data_snapshot_id="active_snapshot", spec="active_spec_a", cost_model_id="cost_a"),
+        SimpleNamespace(experiment_id="active_b", data_snapshot_id="active_snapshot", spec="active_spec_b", cost_model_id="cost_b"),
+    )
+
+    class FakeRunner:
+        def preview_walk_forward(self, spec, *, num_folds, embargo_bars, locked_holdout_months):
+            assert num_folds == 3
+            assert embargo_bars == 1
+            assert locked_holdout_months == 2
+            snapshot_id = "old_current_snapshot" if spec == "old_spec" else "active_snapshot"
+            return SimpleNamespace(data_slice=SimpleNamespace(snapshot_id=snapshot_id))
+
+    current = _current_snapshot_entries(
+        entries,
+        FakeRunner(),
+        num_folds=3,
+        embargo_bars=1,
+        locked_holdout_months=2,
+    )
+
+    assert [entry.experiment_id for entry in current] == ["active_a", "active_b"]
 
 
 def test_stage_b_worker_count_caps_at_eight() -> None:

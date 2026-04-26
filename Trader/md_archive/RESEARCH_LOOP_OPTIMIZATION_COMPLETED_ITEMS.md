@@ -1,0 +1,27 @@
+# Completed Items from Research Loop Optimization Plan
+
+- [x] **Stage-A cheap pre-screen before Stage-B robustness** (G2, S1). Single-fold, no baselines, no cost stress; reject on return ≤ 0, trade count ∉ `[10, 400]`, drawdown > 25%, exposure ∉ `[1%, 90%]`. Wire into `EvaluationRunner.evaluate_preview`.
+- [x] **Conditional cost stress** (S5). Move `_cost_scenario_metrics` out of `_evaluate_fold`; run only after Stage B passes base gates.
+- [x] **Per-(snapshot, fold) baseline cache** (S3). `buy_and_hold`, `regular_session_open_to_close_long`, `session_long_flat_at_close`, `always_flat` are spec-independent; cache them per fold per loop process.
+- [x] **Per-(snapshot, fold) indicator cache** (S3). EMA/RSI/rolling-high/rolling-low keyed by `(snapshot_id, fold_range, feature, params)`. Targets the biggest hit-rate when grids share lookback values.
+- [x] **Cap planner overplan factor at 4** once stage-A exists (S8). Reduce wasted preview/eval-key compute.
+- [x] **Add `delta_exposure_adjusted_buy_and_hold_pct` and use it as the candidate gate** (V1). The current `delta_buy_and_hold > 0.5` is structurally unwinnable for low-exposure strategies in a bull market. This is the *single biggest reason* nothing has promoted.
+- [x] **Fix vwap_deviation churn** (G10). Add `min_bars_between_entries` (cooldown) and `max_entries_per_session` to the signal params; default cooldown 30 bars, max 4 entries/day.
+- [x] **Add per-phase timing JSON** to loop output (rev 1 P0 carryover): planning, key compute, preview, queue scoring, stage A, stage B, robustness neighbors, artifact write, ledger write.
+- [x] **Add `composite` signal handler** with `all` / `any` / `vote_k_of_n` / `primary_plus_confirmations` combiners (M1, M2). Reuse child signals as-is.
+- [x] **Composite leakage tests** (M6) by transitively asserting children's leakage tests still hold under composition.
+- [x] **Composite planner bucket** with the 6 canonical composites in M5 (NOT a full cross-product). Cap composite specs at ~24 per loop.
+- [x] **Replace family-quota boost with a UCB bandit allocator** (S2) keyed on per-family best-return and evaluation count.
+- [x] **Optuna/TPE sampler per family after seed grid is exhausted** (S2). Ledger-return as objective; persist study state in `data/research/optuna/`.
+- [x] **Add information ratio metric** vs B&H per-trading-day (V2). Promotion gate: `IR > 0.5` *and* exposure-adjusted delta > 0.
+- [x] **Block-bootstrap p-value baseline** replacing single random-entry (S9, V5). 500 daily-block resamples; report `p_value_vs_random_entry`.
+- [x] **Vectorize indicator primitives** to NumPy (S4). `ema`, `rsi`, `rolling_max_exclusive`, `rolling_min_exclusive`, `_intraday_realized_volatility_bps`, `_session_progress_stats`.
+- [x] **Process-pool parallel Stage B** (S6). 4–8 workers, single-writer ledger.
+- [x] **Down-sample stored equity to 30-minute granularity** (S10). Per-minute reconstructable from `trades.json`.
+- [x] **Persist per-region critic memory** to disk so the next loop's planner can avoid bad regions across processes (today's `_critic_penalty_by_family` is only family-level).
+- [x] **Within-run failure memory** (rev 1 P2 carryover): after first 2 stage-A failures from a region, suppress remaining stage-B from that region in the *same* loop.
+- [x] **Holdout p-value** (V5) and direction-match gate before `candidate` promotion.
+- [x] **Regime-conditional return reporting** (V4).
+- [x] **Top-N trade concentration check** (V6) added to robustness.
+- [x] **Snapshot subhash cache in `_split_research_and_holdout`** (S3) so research/holdout snapshot IDs aren't re-hashed per spec.
+- [x] **Reduce neighbor count to 3** with median + bootstrap CI (S7).

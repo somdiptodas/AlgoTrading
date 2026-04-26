@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from trader.cli import eval_cmd, ingest_cmd, ledger_cmd, loop_cmd, visualize_cmd
+from trader.cli import eval_cmd, ingest_cmd, ledger_cmd, loop_cmd, trades_cmd, visualize_cmd
 from trader.backtest import main as backtest_main
 
 
@@ -16,6 +16,7 @@ def main() -> None:
         print("Commands:")
         print("  ingest     Fetch aggregate bars from Massive and store them in SQLite")
         print("  visualize  Render a self-contained HTML chart from the local SQLite data")
+        print("  trades     Render a trade/equity HTML review for one experiment")
         print("  backtest   Run the compatibility EMA CLI through the frozen execution engine")
         print("  eval       Evaluate a StrategySpec through the fixed evaluator")
         print("  ledger     Inspect research ledger summaries")
@@ -31,6 +32,9 @@ def main() -> None:
     if command == "visualize":
         visualize_cmd.main(argv)
         return
+    if command == "trades":
+        trades_cmd.main(argv)
+        return
     if command == "backtest":
         backtest_main(argv)
         return
@@ -43,7 +47,9 @@ def main() -> None:
     if command == "loop":
         loop_cmd.main(argv)
         return
-    raise SystemExit(f"Unknown command: {command}. Use 'ingest', 'visualize', 'backtest', 'eval', 'ledger', or 'loop'.")
+    raise SystemExit(
+        f"Unknown command: {command}. Use 'ingest', 'visualize', 'trades', 'backtest', 'eval', 'ledger', or 'loop'."
+    )
 
 
 if __name__ == "__main__":

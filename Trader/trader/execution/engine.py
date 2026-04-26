@@ -40,7 +40,7 @@ def run_long_only_engine(
             action, reason = pending_action
             if action == "enter":
                 if entry_allowed(bar, exec_config):
-                    cash, position = enter_long(cash, bar, exec_config, sizing_fraction)
+                    cash, position = enter_long(cash, bar, exec_config, sizing_fraction, reason)
             elif action == "exit" and position is not None:
                 stop_fill_reference = stop_loss_fill_reference(position, bar, exec_config)
                 if stop_fill_reference is not None:

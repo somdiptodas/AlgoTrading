@@ -12,4 +12,5 @@ class Position:
     shares: int
     entry_commission: float
     entry_cost_cash: float
+    entry_reason: str = "signal_on"
     bars_held: int = 0

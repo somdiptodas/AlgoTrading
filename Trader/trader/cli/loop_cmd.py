@@ -25,8 +25,10 @@ from trader.research.generator import StrategyGenerator
 from trader.research.planner import DeterministicPlanner
 from trader.research.suppressor import RegionSuppressor, SuppressedSpec, WithinRunStageAFailureMemory
 from trader.strategies.registry import REGISTRY
+from trader.strategies.spec import StrategySpec
 
-_ALL_SIGNAL_FAMILIES = ("ema_cross", "breakout", "rsi_reversion", "vwap_deviation", "composite")
+_DEFAULT_SIGNAL_FAMILIES = ("ema_cross", "breakout", "rsi_reversion", "composite")
+_ALL_SIGNAL_FAMILIES = (*_DEFAULT_SIGNAL_FAMILIES, "vwap_deviation")
 DEFAULT_OVERPLAN_FACTOR = 4
 DEFAULT_PREVIEW_FACTOR = 4
 MIN_PLANNED_SPECS = 64
@@ -143,6 +145,45 @@ def _load_or_seed_critic_memory(path: Path, history_entries: Sequence[LedgerEntr
     return memory
 
 
+def _active_data_snapshot_id(
+    runner: EvaluationRunner,
+    *,
+    num_folds: int,
+    embargo_bars: int,
+    locked_holdout_months: int | None,
+) -> str:
+    return runner.preview_walk_forward(
+        StrategySpec(name="snapshot_probe"),
+        num_folds=num_folds,
+        embargo_bars=embargo_bars,
+        locked_holdout_months=locked_holdout_months,
+    ).data_slice.snapshot_id
+
+
+def _current_snapshot_entries(
+    entries: Sequence[LedgerEntry],
+    runner: EvaluationRunner,
+    *,
+    num_folds: int,
+    embargo_bars: int,
+    locked_holdout_months: int | None,
+) -> tuple[LedgerEntry, ...]:
+    current: list[LedgerEntry] = []
+    for entry in entries:
+        try:
+            preview = runner.preview_walk_forward(
+                entry.spec,
+                num_folds=num_folds,
+                embargo_bars=embargo_bars,
+                locked_holdout_months=locked_holdout_months,
+            )
+        except Exception:
+            continue
+        if entry.data_snapshot_id == preview.data_slice.snapshot_id:
+            current.append(entry)
+    return tuple(current)
+
+
 def _stage_b_worker_count(candidate_count: int) -> int:
     if candidate_count <= 0:
         return 0
@@ -231,10 +272,23 @@ def main(argv: list[str] | None = None) -> None:
     critic = HeuristicCritic()
     loop_run_id = _loop_run_id(args)
 
-    history_entries = ledger.list_completed(limit=10_000)
-    critic_memory_path = settings.research_dir / "critic_memory.json"
+    all_history_entries = ledger.list_completed(limit=10_000)
+    active_data_snapshot_id = _active_data_snapshot_id(
+        runner,
+        num_folds=args.folds,
+        embargo_bars=args.embargo_bars,
+        locked_holdout_months=args.holdout_months,
+    )
+    history_entries = _current_snapshot_entries(
+        all_history_entries,
+        runner,
+        num_folds=args.folds,
+        embargo_bars=args.embargo_bars,
+        locked_holdout_months=args.holdout_months,
+    )
+    critic_memory_path = settings.research_dir / f"critic_memory_{active_data_snapshot_id[:12]}.json"
     critic_memory = _load_or_seed_critic_memory(critic_memory_path, history_entries)
-    frontier_entries = ledger.query.promoted_experiments(history_entries, limit=args.frontier_limit)
+    frontier_entries = ledger.query.top_experiments(history_entries, limit=args.frontier_limit)
 
     # --- Build suppressor from history entries that failed robustness gates ---
     suppressor = RegionSuppressor(
@@ -244,7 +298,7 @@ def main(argv: list[str] | None = None) -> None:
         weight_cap=args.suppressor_weight_cap,
     )
 
-    signal_families = tuple(args.signal_family) if args.signal_family else _ALL_SIGNAL_FAMILIES
+    signal_families = tuple(args.signal_family) if args.signal_family else _DEFAULT_SIGNAL_FAMILIES
     frontier_specs = tuple((entry.experiment_id, entry.spec) for entry in frontier_entries)
     started = perf_counter()
     planned = planner.plan(
@@ -252,7 +306,7 @@ def main(argv: list[str] | None = None) -> None:
         frontier_specs=frontier_specs,
         allowed_signal_families=signal_families,
         history_entries=history_entries,
-        optuna_dir=settings.research_dir / "optuna",
+        optuna_dir=settings.research_dir / "optuna" / active_data_snapshot_id[:12],
     )
     generated = generator.validate_and_filter(
         planned,
@@ -342,13 +396,28 @@ def main(argv: list[str] | None = None) -> None:
     )
     _add_timing(timings, "ledger_write", started)
     suppression_summary = ledger.suppression_summary(loop_run_id) if suppression_logged > 0 else {}
-    CriticRegionMemory.from_entries(ledger.list_completed(limit=10_000), registry=REGISTRY).write(critic_memory_path)
+    fresh_history_entries = _current_snapshot_entries(
+        ledger.list_completed(limit=10_000),
+        runner,
+        num_folds=args.folds,
+        embargo_bars=args.embargo_bars,
+        locked_holdout_months=args.holdout_months,
+    )
+    CriticRegionMemory.from_entries(fresh_history_entries, registry=REGISTRY).write(critic_memory_path)
 
-    frontier = frontier_manager.rank([entry.to_result() for entry in ledger.top_experiments(limit=args.frontier_limit)])
+    frontier = frontier_manager.rank(
+        [entry.to_result() for entry in ledger.query.top_experiments(fresh_history_entries, limit=args.frontier_limit)]
+    )
     print(json_dumps(
         {
             "loop_run_id": loop_run_id,
+            "active_data_snapshot_id": active_data_snapshot_id,
             "signal_families": list(signal_families),
+            "history": {
+                "total_completed": len(all_history_entries),
+                "active_completed": len(history_entries),
+                "ignored_stale_completed": len(all_history_entries) - len(history_entries),
+            },
             "planned": len(planned),
             "accepted": len(queue_result.selected),
             "completed": len(completed),

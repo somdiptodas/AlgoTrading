@@ -76,6 +76,7 @@ def trade_to_payload(trade: Trade) -> dict[str, object]:
         "bars_held": trade.bars_held,
         "pnl_cash": trade.pnl_cash,
         "pnl_pct": trade.pnl_pct,
+        "entry_reason": trade.entry_reason,
         "exit_reason": trade.exit_reason,
         "cost_cash": trade.cost_cash,
     }
@@ -93,6 +94,7 @@ def trade_from_payload(payload: dict[str, Any]) -> Trade:
         pnl_pct=float(payload["pnl_pct"]),
         exit_reason=str(payload["exit_reason"]),
         cost_cash=float(payload.get("cost_cash", 0.0)),
+        entry_reason=str(payload.get("entry_reason", "signal_on")),
     )
 
 

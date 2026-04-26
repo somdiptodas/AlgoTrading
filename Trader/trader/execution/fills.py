@@ -19,6 +19,7 @@ class Trade:
     pnl_pct: float
     exit_reason: str
     cost_cash: float = 0.0
+    entry_reason: str = "signal_on"
 
 
 def enter_long(
@@ -26,6 +27,7 @@ def enter_long(
     bar: MarketBar,
     exec_config: ExecConfig,
     sizing_fraction: float = 1.0,
+    reason: str = "signal_on",
 ) -> tuple[float, Position | None]:
     entry_bps = exec_config.slippage_bps + (exec_config.spread_bps / 2.0)
     fill_price = bar.open * (1.0 + entry_bps / 10_000.0)
@@ -47,6 +49,7 @@ def enter_long(
         shares=max_shares,
         entry_commission=commission,
         entry_cost_cash=((fill_price - bar.open) * max_shares) + commission,
+        entry_reason=reason,
     )
     return new_cash, position
 
@@ -95,5 +98,6 @@ def exit_long_at_price(
         pnl_pct=(pnl_cash / invested) * 100 if invested else 0.0,
         exit_reason=reason,
         cost_cash=position.entry_cost_cash + exit_cost_cash,
+        entry_reason=position.entry_reason,
     )
     return new_cash, trade
