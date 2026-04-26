@@ -322,7 +322,7 @@ the checklist in each commit.
 
 ### Phase 7: Planner And Search Space
 
-- [ ] Add a versioned `multi_signal_v1` search grammar.
+- [x] Add a versioned `multi_signal_v1` search grammar.
 - [ ] Generate candidates lazily instead of precomputing the full Cartesian
       product.
 - [ ] Generate only 3+ signal entry rules and 3+ signal exit rules.

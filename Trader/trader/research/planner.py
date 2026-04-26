@@ -61,6 +61,104 @@ _CONFIRMATION_FILTER_GRID = {
     ),
 }
 _COMPOSITE_VARIANTS_PER_RECIPE = 3
+MULTI_SIGNAL_SEARCH_SPACE_VERSION = "multi_signal_v1"
+
+
+@dataclass(frozen=True)
+class MultiSignalRuleShape:
+    combiner: str
+    predicates: tuple[str, ...]
+    k: int | None = None
+
+
+@dataclass(frozen=True)
+class MultiSignalSearchGrammar:
+    version: str
+    entry_shapes: tuple[MultiSignalRuleShape, ...]
+    exit_shapes: tuple[MultiSignalRuleShape, ...]
+    predicate_param_grids: dict[str, tuple[dict[str, object], ...]]
+
+
+_MULTI_SIGNAL_PREDICATE_PARAM_GRIDS: dict[str, tuple[dict[str, object], ...]] = {
+    "rsi_below": (
+        {"length": 7, "threshold": 25.0},
+        {"length": 7, "threshold": 30.0},
+        {"length": 14, "threshold": 30.0},
+        {"length": 21, "threshold": 35.0},
+    ),
+    "rsi_above": (
+        {"length": 7, "threshold": 70.0},
+        {"length": 14, "threshold": 70.0},
+        {"length": 14, "threshold": 75.0},
+        {"length": 21, "threshold": 65.0},
+    ),
+    "ema_trend_up": (
+        {"fast": 8, "slow": 34, "buffer_bps": 0.0},
+        {"fast": 12, "slow": 55, "buffer_bps": 0.0},
+        {"fast": 20, "slow": 80, "buffer_bps": 5.0},
+    ),
+    "ema_trend_down": (
+        {"fast": 8, "slow": 34, "buffer_bps": 0.0},
+        {"fast": 12, "slow": 55, "buffer_bps": 0.0},
+        {"fast": 20, "slow": 80, "buffer_bps": 5.0},
+    ),
+    "breakout_up": (
+        {"window": 20, "buffer_bps": 0.0},
+        {"window": 40, "buffer_bps": 5.0},
+        {"window": 60, "buffer_bps": 10.0},
+    ),
+    "breakout_failed": (
+        {"window": 20, "buffer_bps": 0.0},
+        {"window": 40, "buffer_bps": 5.0},
+        {"window": 60, "buffer_bps": 10.0},
+    ),
+    "vwap_distance": (
+        {"side": "below", "min_bps": 10.0},
+        {"side": "below", "min_bps": 25.0},
+        {"side": "below", "min_bps": 50.0},
+    ),
+    "vwap_reclaimed": (
+        {"min_bps": 0.0},
+        {"min_bps": 5.0},
+        {"min_bps": 10.0},
+    ),
+    "relative_volume": (
+        {"lookback": 20, "min_ratio": 1.25},
+        {"lookback": 20, "min_ratio": 1.50},
+        {"lookback": 40, "min_ratio": 1.25},
+    ),
+    "intraday_volatility": (
+        {"lookback": 10, "percentile_window": 60, "min_percentile": 50.0},
+        {"lookback": 20, "percentile_window": 120, "min_percentile": 70.0},
+    ),
+    "day_type": (
+        {"mode": "trend", "min_bars": 30, "trend_bps": 50.0, "min_efficiency": 0.60},
+        {"mode": "mean_reversion", "min_bars": 30, "trend_bps": 50.0, "max_efficiency": 0.35},
+    ),
+}
+_MULTI_SIGNAL_GRAMMAR = MultiSignalSearchGrammar(
+    version=MULTI_SIGNAL_SEARCH_SPACE_VERSION,
+    entry_shapes=(
+        MultiSignalRuleShape("k_of_n", ("rsi_below", "vwap_distance", "relative_volume", "ema_trend_up"), k=3),
+        MultiSignalRuleShape("all", ("rsi_below", "vwap_distance", "relative_volume")),
+        MultiSignalRuleShape("k_of_n", ("breakout_up", "relative_volume", "ema_trend_up"), k=2),
+        MultiSignalRuleShape("all", ("breakout_up", "day_type", "relative_volume")),
+        MultiSignalRuleShape("k_of_n", ("ema_trend_up", "intraday_volatility", "day_type", "breakout_up"), k=3),
+        MultiSignalRuleShape("k_of_n", ("rsi_below", "intraday_volatility", "vwap_distance"), k=2),
+    ),
+    exit_shapes=(
+        MultiSignalRuleShape("any", ("rsi_above", "ema_trend_down", "vwap_reclaimed")),
+        MultiSignalRuleShape("k_of_n", ("rsi_above", "ema_trend_down", "breakout_failed"), k=2),
+        MultiSignalRuleShape("any", ("vwap_reclaimed", "intraday_volatility", "day_type")),
+        MultiSignalRuleShape("k_of_n", ("rsi_above", "vwap_reclaimed", "breakout_failed"), k=2),
+        MultiSignalRuleShape("any", ("ema_trend_down", "day_type", "relative_volume")),
+    ),
+    predicate_param_grids=_MULTI_SIGNAL_PREDICATE_PARAM_GRIDS,
+)
+
+
+def multi_signal_search_grammar() -> MultiSignalSearchGrammar:
+    return _MULTI_SIGNAL_GRAMMAR
 
 
 @dataclass(frozen=True)

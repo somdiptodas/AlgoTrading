@@ -6,9 +6,42 @@ from types import SimpleNamespace
 from pathlib import Path
 
 from trader.ledger.entry import LedgerEntry
-from trader.research.planner import DeterministicPlanner
+from trader.research.planner import (
+    MULTI_SIGNAL_SEARCH_SPACE_VERSION,
+    DeterministicPlanner,
+    MultiSignalRuleShape,
+    multi_signal_search_grammar,
+)
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import SignalSpec, StrategySpec
+
+
+def test_multi_signal_search_grammar_is_versioned_and_validatable() -> None:
+    grammar = multi_signal_search_grammar()
+
+    assert grammar.version == MULTI_SIGNAL_SEARCH_SPACE_VERSION == "multi_signal_v1"
+    assert grammar.entry_shapes
+    assert grammar.exit_shapes
+    assert all(len(shape.predicates) >= 3 for shape in grammar.entry_shapes)
+    assert all(len(shape.predicates) >= 3 for shape in grammar.exit_shapes)
+    assert all(
+        predicate in grammar.predicate_param_grids
+        for shape in (*grammar.entry_shapes, *grammar.exit_shapes)
+        for predicate in shape.predicates
+    )
+
+    REGISTRY.validate_spec(
+        StrategySpec(
+            name="multi_signal_grammar_sample",
+            signal=SignalSpec(
+                "multi_signal",
+                {
+                    "entry_rule": _rule_payload(grammar.entry_shapes[0]),
+                    "exit_rule": _rule_payload(grammar.exit_shapes[0]),
+                },
+            ),
+        )
+    )
 
 
 def test_planner_reserves_frontier_and_each_enabled_family_before_truncation() -> None:
@@ -515,3 +548,17 @@ def _child_names(spec: StrategySpec) -> tuple[str, ...]:
     children = spec.signal.params["children"]
     assert isinstance(children, list)
     return tuple(str(child["name"]) for child in children)
+
+
+def _rule_payload(shape: MultiSignalRuleShape) -> dict[str, object]:
+    grammar = multi_signal_search_grammar()
+    rule: dict[str, object] = {
+        "combiner": shape.combiner,
+        "signals": [
+            {"name": predicate, "params": grammar.predicate_param_grids[predicate][0]}
+            for predicate in shape.predicates
+        ],
+    }
+    if shape.k is not None:
+        rule["k"] = shape.k
+    return rule
