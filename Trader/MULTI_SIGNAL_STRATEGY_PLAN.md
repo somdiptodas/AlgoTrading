@@ -243,7 +243,7 @@ the checklist in each commit.
 
 ### Phase 2: Atomic Signal Predicates
 
-- [ ] Create an atomic predicate registry separate from full strategy regimes.
+- [x] Create an atomic predicate registry separate from full strategy regimes.
 - [ ] Add RSI predicates:
   - [ ] `rsi_below`
   - [ ] `rsi_above`
