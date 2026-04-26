@@ -28,7 +28,9 @@ def _bar(minute: int, close: float, *, volume: float = 1_000.0, vwap: float | No
 
 
 def test_atomic_predicate_registry_is_separate_from_strategy_registry() -> None:
-    assert PREDICATES.names() == ()
+    assert "rsi_below" in PREDICATES.names()
+    assert "ema_cross" not in PREDICATES.names()
+    assert "breakout" not in PREDICATES.names()
 
 
 def test_atomic_predicate_registry_normalizes_and_generates_votes() -> None:
@@ -81,3 +83,18 @@ def test_atomic_predicate_registry_rejects_unknown_or_invalid_handlers() -> None
     )
     with pytest.raises(ValueError, match="produced 0 votes for 1 test bars"):
         bad_length.generate_votes("bad", (), (_bar(0, 100.0),), {})
+
+
+def test_rsi_below_predicate_votes_when_rsi_is_under_threshold() -> None:
+    history = (_bar(0, 100.0), _bar(1, 101.0))
+    test = (_bar(2, 90.0), _bar(3, 89.0))
+
+    assert PREDICATES.validate_params("rsi_below", {"length": 2, "threshold": "30"}) == {
+        "length": 2,
+        "threshold": 30.0,
+    }
+    assert PREDICATES.required_history("rsi_below", {"length": 2, "threshold": 30.0}) == 3
+    votes = PREDICATES.generate_votes("rsi_below", history, test, {"length": 2, "threshold": 30.0})
+
+    assert [vote.passed for vote in votes] == [True, True]
+    assert votes[0].detail == "RSI 8.33 < 30.00"

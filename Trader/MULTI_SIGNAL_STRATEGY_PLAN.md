@@ -245,7 +245,7 @@ the checklist in each commit.
 
 - [x] Create an atomic predicate registry separate from full strategy regimes.
 - [ ] Add RSI predicates:
-  - [ ] `rsi_below`
+  - [x] `rsi_below`
   - [ ] `rsi_above`
 - [ ] Add EMA predicates:
   - [ ] `ema_trend_up`
