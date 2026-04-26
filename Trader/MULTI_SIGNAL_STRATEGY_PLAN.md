@@ -249,7 +249,7 @@ the checklist in each commit.
   - [x] `rsi_above`
 - [ ] Add EMA predicates:
   - [x] `ema_trend_up`
-  - [ ] `ema_trend_down`
+  - [x] `ema_trend_down`
 - [ ] Add breakout predicates:
   - [ ] `breakout_up`
   - [ ] `breakout_failed`

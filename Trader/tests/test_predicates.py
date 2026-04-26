@@ -129,3 +129,14 @@ def test_ema_trend_up_predicate_votes_when_fast_ema_is_above_slow_ema() -> None:
     assert votes[0].passed is True
     assert votes[0].detail.startswith("fast EMA ")
     assert " > slow EMA " in votes[0].detail
+
+
+def test_ema_trend_down_predicate_votes_when_fast_ema_is_below_slow_ema() -> None:
+    history = (_bar(0, 110.0), _bar(1, 109.0), _bar(2, 108.0))
+    test = (_bar(3, 100.0),)
+
+    votes = PREDICATES.generate_votes("ema_trend_down", history, test, {"fast": 2, "slow": 3})
+
+    assert votes[0].passed is True
+    assert votes[0].detail.startswith("fast EMA ")
+    assert " < slow EMA " in votes[0].detail
