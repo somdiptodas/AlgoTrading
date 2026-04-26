@@ -253,3 +253,48 @@ def test_day_type_predicate_votes_when_session_to_date_behavior_matches_mode() -
         SignalVote("day_type", False, "day type unavailable"),
         SignalVote("day_type", True, "trend day move 100.00 bps efficiency 0.67"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("name", "params"),
+    (
+        ("rsi_below", {"length": 3, "threshold": 60.0}),
+        ("rsi_above", {"length": 3, "threshold": 40.0}),
+        ("ema_trend_up", {"fast": 2, "slow": 4}),
+        ("ema_trend_down", {"fast": 2, "slow": 4}),
+        ("breakout_up", {"window": 3}),
+        ("breakout_failed", {"window": 3}),
+        ("vwap_distance", {"side": "below", "min_bps": 1.0}),
+        ("vwap_reclaimed", {"min_bps": 0.0}),
+        ("relative_volume", {"lookback": 3, "min_ratio": 0.5}),
+        ("intraday_volatility", {"lookback": 2, "percentile_window": 3, "min_percentile": 0.0}),
+        ("day_type", {"mode": "trend", "min_bars": 2, "trend_bps": 1.0, "min_efficiency": 0.60}),
+    ),
+)
+def test_atomic_predicates_do_not_change_prefix_when_future_bars_change(
+    name: str,
+    params: dict[str, object],
+) -> None:
+    history = tuple(
+        _bar(index, 100.0 + ((index % 5) - 2) * 0.35, volume=1_000.0 + index * 10, vwap=100.0)
+        for index in range(8)
+    )
+    test = tuple(
+        _bar(8 + index, 100.0 + ((index % 7) - 3) * 0.45, volume=1_200.0 + index * 25, vwap=100.25)
+        for index in range(8)
+    )
+    baseline = PREDICATES.generate_votes(name, history, test, params)
+
+    for prefix_end in range(len(test) - 1):
+        altered = list(test)
+        for future_index in range(prefix_end + 1, len(altered)):
+            altered[future_index] = _bar(
+                8 + future_index,
+                200.0 + future_index,
+                volume=10_000.0 + future_index,
+                vwap=50.0,
+            )
+
+        votes = PREDICATES.generate_votes(name, history, tuple(altered), params)
+
+        assert votes[: prefix_end + 1] == baseline[: prefix_end + 1]

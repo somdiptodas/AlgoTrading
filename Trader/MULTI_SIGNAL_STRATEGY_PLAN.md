@@ -244,23 +244,23 @@ the checklist in each commit.
 ### Phase 2: Atomic Signal Predicates
 
 - [x] Create an atomic predicate registry separate from full strategy regimes.
-- [ ] Add RSI predicates:
+- [x] Add RSI predicates:
   - [x] `rsi_below`
   - [x] `rsi_above`
-- [ ] Add EMA predicates:
+- [x] Add EMA predicates:
   - [x] `ema_trend_up`
   - [x] `ema_trend_down`
-- [ ] Add breakout predicates:
+- [x] Add breakout predicates:
   - [x] `breakout_up`
   - [x] `breakout_failed`
-- [ ] Add VWAP predicates:
+- [x] Add VWAP predicates:
   - [x] `vwap_distance`
   - [x] `vwap_reclaimed`
-- [ ] Add volume and regime predicates:
+- [x] Add volume and regime predicates:
   - [x] `relative_volume`
   - [x] `intraday_volatility`
   - [x] `day_type`
-- [ ] Add no-lookahead tests for every atomic predicate.
+- [x] Add no-lookahead tests for every atomic predicate.
 
 ### Phase 3: Multi-Signal Rule Evaluation
 
