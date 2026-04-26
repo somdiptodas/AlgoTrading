@@ -54,6 +54,8 @@ def _normalize_rule(scope: str, raw_rule: object) -> dict[str, object]:
     raw_signals = raw_rule.get("signals")
     if not isinstance(raw_signals, (list, tuple)):
         raise ValueError(f"multi_signal.{scope}.signals must be a list of predicate payloads")
+    if scope == "entry_rule" and len(raw_signals) < 3:
+        raise ValueError("multi_signal.entry_rule.signals must contain at least 3 predicates")
 
     signals: list[dict[str, object]] = []
     for index, raw_signal in enumerate(raw_signals):

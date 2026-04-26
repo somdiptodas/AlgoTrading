@@ -265,7 +265,7 @@ the checklist in each commit.
 ### Phase 3: Multi-Signal Rule Evaluation
 
 - [x] Add `multi_signal` normalization and validation.
-- [ ] Reject entry rules with fewer than 3 signals.
+- [x] Reject entry rules with fewer than 3 signals.
 - [ ] Reject exit rules with fewer than 3 signals.
 - [ ] Implement `all`, `any`, and `k_of_n` combiners.
 - [ ] Canonicalize child signal params for stable hashing and dedupe.

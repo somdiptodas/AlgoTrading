@@ -91,12 +91,31 @@ def test_multi_signal_validation_rejects_bad_rule_shapes() -> None:
 
     params = _multi_signal_params()
     entry_rule = dict(params["entry_rule"])  # type: ignore[arg-type]
-    entry_rule["signals"] = [{"name": "missing", "params": {}}]
+    entry_rule["signals"] = [
+        {"name": "missing", "params": {}},
+        {"name": "ema_trend_up", "params": {"fast": 2, "slow": 3}},
+        {"name": "vwap_distance", "params": {"side": "below"}},
+    ]
     params["entry_rule"] = entry_rule
     with pytest.raises(ValueError, match="Unknown atomic predicate"):
         REGISTRY.validate_spec(
             StrategySpec(
                 name="bad_child_predicate",
+                signal=SignalSpec("multi_signal", params),
+            )
+        )
+
+
+def test_multi_signal_rejects_entry_rules_with_fewer_than_three_signals() -> None:
+    params = _multi_signal_params()
+    entry_rule = dict(params["entry_rule"])  # type: ignore[arg-type]
+    entry_rule["signals"] = entry_rule["signals"][:2]  # type: ignore[index]
+    params["entry_rule"] = entry_rule
+
+    with pytest.raises(ValueError, match="entry_rule\\.signals must contain at least 3"):
+        REGISTRY.validate_spec(
+            StrategySpec(
+                name="short_entry_rule",
                 signal=SignalSpec("multi_signal", params),
             )
         )
