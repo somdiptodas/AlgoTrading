@@ -11,3 +11,5 @@
 - [ ] Add a smoke assertion that frontier-utility generators used by planner (including `frontier_neighborhood` and `optuna_tpe`) are actually represented in completed batches when enabled, since this 5-iteration window produced no frontier_neighborhood or optuna_tpe completions.
 
 - [ ] Add a runner-level regression test proving aggregate `information_ratio_vs_buy_and_hold` is recomputed from pooled daily active returns across fold backtests, not averaged from fold-level IR values.
+- [ ] Add an explicit planner/search-exhaustion report when a loop plans only duplicate specs and reaches `previewed=0`, so long runs fail visibly into "expand search space" work instead of silently completing zero experiments.
+- [ ] Add a novelty-expansion path after the current optuna/grid/composite buckets are exhausted; this 20-iteration run ended with iterations 19-20 planning 64 duplicates and completing 0 new experiments.

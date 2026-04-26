@@ -415,7 +415,7 @@ def _optuna_library_suggestions(
             for key in distributions
             if key in entry.spec.signal.params
         }
-        if set(params) != set(distributions):
+        if not _params_match_distributions(params, distributions):
             continue
         study.add_trial(
             optuna.trial.create_trial(
@@ -444,6 +444,16 @@ def _optuna_library_suggestions(
         if len(suggestions) >= limit:
             break
     return tuple(suggestions)
+
+
+def _params_match_distributions(params: dict[str, object], distributions: dict[str, object]) -> bool:
+    if set(params) != set(distributions):
+        return False
+    for key, distribution in distributions.items():
+        choices = getattr(distribution, "choices", None)
+        if choices is not None and params[key] not in choices:
+            return False
+    return True
 
 
 def _history_density_suggestions(

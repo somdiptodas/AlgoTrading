@@ -408,6 +408,75 @@ def test_planner_loads_existing_optuna_study_without_fake_objectives(tmp_path: P
     assert any(state == "FAIL" for _, _, state in tell_calls)
 
 
+def test_planner_skips_optuna_seed_rows_outside_current_grid(tmp_path: Path, monkeypatch) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    grid = REGISTRY.parameter_grid("rsi_reversion")
+    history = tuple(
+        _entry(f"rsi_{index}", "rsi_reversion", grid[index], return_pct=float(index))
+        for index in range(10)
+    ) + (
+        _entry(
+            "rsi_stale",
+            "rsi_reversion",
+            {**grid[0], "oversold_threshold": 25.0},
+            return_pct=99.0,
+        ),
+    )
+    added_trials = []
+
+    class FakeDistribution:
+        def __init__(self, choices):
+            self.choices = tuple(choices)
+
+    class FakeTrial:
+        def __init__(self, params, user_attrs=None):
+            self.params = params
+            self.user_attrs = user_attrs or {}
+
+    class FakeStudy:
+        def __init__(self):
+            self.ask_count = 0
+
+        def get_trials(self, deepcopy=False):
+            return []
+
+        def add_trial(self, trial):
+            added_trials.append(trial)
+
+        def ask(self, fixed_distributions):
+            self.ask_count += 1
+            params = {
+                key: distribution.choices[self.ask_count % len(distribution.choices)]
+                for key, distribution in fixed_distributions.items()
+            }
+            return FakeTrial(params)
+
+        def tell(self, trial, value=None, state=None):
+            pass
+
+    fake_optuna = SimpleNamespace(
+        create_study=lambda **kwargs: FakeStudy(),
+        distributions=SimpleNamespace(CategoricalDistribution=FakeDistribution),
+        samplers=SimpleNamespace(TPESampler=lambda **kwargs: object()),
+        trial=SimpleNamespace(
+            create_trial=lambda *, params, distributions, value, user_attrs: FakeTrial(params, user_attrs=user_attrs),
+            TrialState=SimpleNamespace(FAIL="FAIL"),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "optuna", fake_optuna)
+
+    planner.plan(
+        batch_size=20,
+        allowed_signal_families=("rsi_reversion",),
+        history_entries=history,
+        optuna_dir=tmp_path,
+    )
+
+    assert {trial.user_attrs["ledger_experiment_id"] for trial in added_trials} == {
+        entry.experiment_id for entry in history[:-1]
+    }
+
+
 def _entry(
     experiment_id: str,
     signal_name: str,
