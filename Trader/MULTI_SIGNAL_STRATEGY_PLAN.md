@@ -258,7 +258,7 @@ the checklist in each commit.
   - [x] `vwap_reclaimed`
 - [ ] Add volume and regime predicates:
   - [x] `relative_volume`
-  - [ ] `intraday_volatility`
+  - [x] `intraday_volatility`
   - [ ] `day_type`
 - [ ] Add no-lookahead tests for every atomic predicate.
 

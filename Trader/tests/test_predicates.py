@@ -203,3 +203,29 @@ def test_relative_volume_predicate_votes_when_current_volume_exceeds_prior_avera
     votes = PREDICATES.generate_votes("relative_volume", history, test, {"lookback": 2, "min_ratio": 1.5})
 
     assert votes == [SignalVote("relative_volume", True, "relative volume 2.00 in [1.50, 100.00]")]
+
+
+def test_intraday_volatility_predicate_votes_when_current_volatility_percentile_is_in_range() -> None:
+    history = (_bar(0, 100.0), _bar(1, 101.0), _bar(2, 102.0))
+    test = (_bar(3, 104.0),)
+
+    assert PREDICATES.validate_params(
+        "intraday_volatility",
+        {"lookback": 2, "percentile_window": 2, "min_percentile": "50"},
+    ) == {
+        "lookback": 2,
+        "percentile_window": 2,
+        "min_percentile": 50.0,
+        "max_percentile": 100.0,
+    }
+    assert PREDICATES.required_history("intraday_volatility", {"lookback": 2, "percentile_window": 2}) == 4
+    votes = PREDICATES.generate_votes(
+        "intraday_volatility",
+        history,
+        test,
+        {"lookback": 2, "percentile_window": 2, "min_percentile": 50.0},
+    )
+
+    assert votes == [
+        SignalVote("intraday_volatility", True, "intraday volatility percentile 100.00 in [50.00, 100.00]")
+    ]
