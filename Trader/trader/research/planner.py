@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from math import exp
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from trader.ledger.entry import LedgerEntry
 from trader.strategies.registry import StrategyRegistry
@@ -246,53 +246,18 @@ class DeterministicPlanner:
             history_entries=history_entries,
             optuna_dir=optuna_dir,
         )
-        composite_buckets: list[list[PlannedSpec]] = []
+        composite_buckets: list[Iterable[PlannedSpec]] = []
         if "composite" in allowed:
             composite_buckets = self._composite_candidate_buckets()
-        confirmation_buckets: list[list[PlannedSpec]] = []
+        confirmation_buckets: list[Iterable[PlannedSpec]] = []
         for signal_name in allowed:
             filters_for_signal = _CONFIRMATION_FILTER_GRID.get(signal_name, ())
             if not filters_for_signal:
                 continue
-            confirmation_candidates: list[PlannedSpec] = []
-            for params in self.registry.parameter_grid(signal_name):
-                for filters in filters_for_signal:
-                    confirmation_candidates.append(
-                        PlannedSpec(
-                            spec=self._rename(
-                                StrategySpec(
-                                    name=f"{signal_name}_confirmation",
-                                    signal=SignalSpec(signal_name, params),
-                                    sizing=_SIZING_GRID[1],
-                                    filters=filters,
-                                    exec_config=ExecConfig(),
-                                    tags=("confirmation",),
-                                )
-                            ),
-                            generator_kind="confirmation_grid",
-                        )
-                    )
-            confirmation_buckets.append(confirmation_candidates)
-        grid_buckets: list[list[PlannedSpec]] = []
+            confirmation_buckets.append(self._iter_confirmation_candidates(signal_name, filters_for_signal))
+        grid_buckets: list[Iterable[PlannedSpec]] = []
         for signal_name in allowed:
-            family_candidates: list[PlannedSpec] = []
-            for params in self.registry.parameter_grid(signal_name):
-                for sizing, exec_config, filters in _parameter_combinations():
-                    family_candidates.append(
-                        PlannedSpec(
-                            spec=self._rename(
-                                StrategySpec(
-                                    name=f"{signal_name}_grid",
-                                    signal=SignalSpec(signal_name, params),
-                                    sizing=sizing,
-                                    filters=filters,
-                                    exec_config=exec_config,
-                                )
-                            ),
-                            generator_kind="grid",
-                        )
-                    )
-            grid_buckets.append(family_candidates)
+            grid_buckets.append(self._iter_grid_candidates(signal_name))
         frontier_buckets = {signal_name: [] for signal_name in allowed}
         for parent_experiment_id, parent_spec in sorted(frontier_specs, key=lambda item: item[0]):
             if parent_spec.signal.name not in allowed:
@@ -312,23 +277,44 @@ class DeterministicPlanner:
             + grid_buckets
             + confirmation_buckets
         )
-        indexes = [0 for _ in buckets]
-        deduped: list[PlannedSpec] = []
-        seen_hashes: set[str] = set()
-        while len(deduped) < batch_size and any(index < len(bucket) for index, bucket in zip(indexes, buckets)):
-            for bucket_index, bucket in enumerate(buckets):
-                while indexes[bucket_index] < len(bucket):
-                    candidate = bucket[indexes[bucket_index]]
-                    indexes[bucket_index] += 1
-                    spec_hash = candidate.spec.spec_hash()
-                    if spec_hash in seen_hashes:
-                        continue
-                    seen_hashes.add(spec_hash)
-                    deduped.append(candidate)
-                    break
-                if len(deduped) >= batch_size:
-                    break
-        return tuple(deduped)
+        return _round_robin_deduped(buckets, batch_size)
+
+    def _iter_confirmation_candidates(
+        self,
+        signal_name: str,
+        filters_for_signal: Sequence[tuple[FilterSpec, ...]],
+    ) -> Iterable[PlannedSpec]:
+        for params in self.registry.parameter_grid(signal_name):
+            for filters in filters_for_signal:
+                yield PlannedSpec(
+                    spec=self._rename(
+                        StrategySpec(
+                            name=f"{signal_name}_confirmation",
+                            signal=SignalSpec(signal_name, params),
+                            sizing=_SIZING_GRID[1],
+                            filters=filters,
+                            exec_config=ExecConfig(),
+                            tags=("confirmation",),
+                        )
+                    ),
+                    generator_kind="confirmation_grid",
+                )
+
+    def _iter_grid_candidates(self, signal_name: str) -> Iterable[PlannedSpec]:
+        for params in self.registry.parameter_grid(signal_name):
+            for sizing, exec_config, filters in _parameter_combinations():
+                yield PlannedSpec(
+                    spec=self._rename(
+                        StrategySpec(
+                            name=f"{signal_name}_grid",
+                            signal=SignalSpec(signal_name, params),
+                            sizing=sizing,
+                            filters=filters,
+                            exec_config=exec_config,
+                        )
+                    ),
+                    generator_kind="grid",
+                )
 
     def _rename(self, spec: StrategySpec) -> StrategySpec:
         return StrategySpec.from_payload(
@@ -344,11 +330,11 @@ class DeterministicPlanner:
         allowed_signal_families: Sequence[str],
         history_entries: Sequence[LedgerEntry],
         optuna_dir: Path | None,
-    ) -> list[list[PlannedSpec]]:
+    ) -> list[Iterable[PlannedSpec]]:
         if optuna_dir is None:
             return []
         completed_by_family = _completed_entries_by_family(history_entries)
-        buckets: list[list[PlannedSpec]] = []
+        buckets: list[Iterable[PlannedSpec]] = []
         for signal_name in allowed_signal_families:
             if signal_name == "composite":
                 continue
@@ -388,33 +374,29 @@ class DeterministicPlanner:
                 buckets.append(candidates)
         return buckets
 
-    def _composite_candidate_buckets(self) -> list[list[PlannedSpec]]:
-        buckets: list[list[PlannedSpec]] = []
-        for recipe in _COMPOSITE_RECIPES:
-            candidates: list[PlannedSpec] = []
-            for variant_index in range(_COMPOSITE_VARIANTS_PER_RECIPE):
-                if recipe.signal_name is not None:
-                    signal_grid = self.registry.parameter_grid(recipe.signal_name)
-                    signal = SignalSpec(recipe.signal_name, signal_grid[variant_index % len(signal_grid)])
-                else:
-                    signal = SignalSpec("composite", self._composite_signal_params(recipe, variant_index))
-                candidates.append(
-                    PlannedSpec(
-                        spec=self._rename(
-                            StrategySpec(
-                                name=f"composite_{recipe.name}",
-                                signal=signal,
-                                sizing=_SIZING_GRID[1],
-                                filters=recipe.filters,
-                                exec_config=recipe.exec_config,
-                                tags=("composite", recipe.name),
-                            )
-                        ),
-                        generator_kind="composite_grid",
+    def _composite_candidate_buckets(self) -> list[Iterable[PlannedSpec]]:
+        return [self._iter_composite_recipe_candidates(recipe) for recipe in _COMPOSITE_RECIPES]
+
+    def _iter_composite_recipe_candidates(self, recipe: _CompositeRecipe) -> Iterable[PlannedSpec]:
+        for variant_index in range(_COMPOSITE_VARIANTS_PER_RECIPE):
+            if recipe.signal_name is not None:
+                signal_grid = self.registry.parameter_grid(recipe.signal_name)
+                signal = SignalSpec(recipe.signal_name, signal_grid[variant_index % len(signal_grid)])
+            else:
+                signal = SignalSpec("composite", self._composite_signal_params(recipe, variant_index))
+            yield PlannedSpec(
+                spec=self._rename(
+                    StrategySpec(
+                        name=f"composite_{recipe.name}",
+                        signal=signal,
+                        sizing=_SIZING_GRID[1],
+                        filters=recipe.filters,
+                        exec_config=recipe.exec_config,
+                        tags=("composite", recipe.name),
                     )
-                )
-            buckets.append(candidates)
-        return buckets
+                ),
+                generator_kind="composite_grid",
+            )
 
     def _composite_signal_params(self, recipe: _CompositeRecipe, variant_index: int) -> dict[str, object]:
         children = []
@@ -433,16 +415,35 @@ class DeterministicPlanner:
         return signal_params
 
 
-def _parameter_combinations() -> tuple[tuple[SizingSpec, ExecConfig, tuple[FilterSpec, ...]], ...]:
+def _round_robin_deduped(buckets: Sequence[Iterable[PlannedSpec]], batch_size: int) -> tuple[PlannedSpec, ...]:
+    iterators = [iter(bucket) for bucket in buckets]
+    deduped: list[PlannedSpec] = []
+    seen_hashes: set[str] = set()
+    while len(deduped) < batch_size and iterators:
+        active_iterators = []
+        for iterator in iterators:
+            for candidate in iterator:
+                spec_hash = candidate.spec.spec_hash()
+                if spec_hash in seen_hashes:
+                    continue
+                seen_hashes.add(spec_hash)
+                deduped.append(candidate)
+                active_iterators.append(iterator)
+                break
+            if len(deduped) >= batch_size:
+                break
+        iterators = active_iterators
+    return tuple(deduped)
+
+
+def _parameter_combinations() -> Iterable[tuple[SizingSpec, ExecConfig, tuple[FilterSpec, ...]]]:
     combination_count = len(_SIZING_GRID) * len(_EXECUTION_GRID) * len(_FILTER_GRID)
-    return tuple(
-        (
+    for index in range(combination_count):
+        yield (
             _SIZING_GRID[index % len(_SIZING_GRID)],
             _EXECUTION_GRID[index % len(_EXECUTION_GRID)],
             _FILTER_GRID[index % len(_FILTER_GRID)],
         )
-        for index in range(combination_count)
-    )
 
 
 def _completed_entries_by_family(entries: Sequence[LedgerEntry]) -> dict[str, tuple[LedgerEntry, ...]]:

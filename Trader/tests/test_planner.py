@@ -13,7 +13,7 @@ from trader.research.planner import (
     multi_signal_search_grammar,
 )
 from trader.strategies.registry import REGISTRY
-from trader.strategies.spec import SignalSpec, StrategySpec
+from trader.strategies.spec import ExecConfig, SignalSpec, SizingSpec, StrategySpec
 
 
 def test_multi_signal_search_grammar_is_versioned_and_validatable() -> None:
@@ -66,6 +66,20 @@ def test_planner_reserves_frontier_and_each_enabled_family_before_truncation() -
         "breakout",
         "rsi_reversion",
     }
+
+
+def test_planner_does_not_eagerly_expand_grid_combinations(monkeypatch) -> None:
+    def lazy_combinations():
+        yield (SizingSpec("fixed_fraction", {"fraction": 0.25}), ExecConfig(), ())
+        raise AssertionError("planner consumed more combinations than the requested batch needed")
+
+    monkeypatch.setattr("trader.research.planner._parameter_combinations", lazy_combinations)
+    planner = DeterministicPlanner(REGISTRY)
+
+    planned = planner.plan(batch_size=1, allowed_signal_families=("ema_cross",))
+
+    assert len(planned) == 1
+    assert planned[0].spec.signal.name == "ema_cross"
 
 
 def test_planner_reserves_grid_slot_for_each_enabled_family_before_truncation() -> None:
