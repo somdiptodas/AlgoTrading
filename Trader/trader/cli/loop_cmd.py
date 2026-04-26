@@ -28,8 +28,8 @@ from trader.research.suppressor import RegionSuppressor, SuppressedSpec, WithinR
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import StrategySpec
 
-_DEFAULT_SIGNAL_FAMILIES = ("ema_cross", "breakout", "rsi_reversion", "composite")
-_ALL_SIGNAL_FAMILIES = (*_DEFAULT_SIGNAL_FAMILIES, "vwap_deviation")
+_DEFAULT_SIGNAL_FAMILIES = ("multi_signal",)
+_ALL_SIGNAL_FAMILIES = ("multi_signal", "ema_cross", "breakout", "rsi_reversion", "composite", "vwap_deviation")
 DEFAULT_OVERPLAN_FACTOR = 4
 DEFAULT_PREVIEW_FACTOR = 4
 MIN_PLANNED_SPECS = 64

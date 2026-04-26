@@ -281,7 +281,7 @@ class DeterministicPlanner:
         restart_seed: str | None = None,
         restart_index: int = 0,
     ) -> tuple[PlannedSpec, ...]:
-        allowed = tuple(allowed_signal_families or ("ema_cross", "breakout"))
+        allowed = tuple(allowed_signal_families or ("multi_signal",))
         optuna_buckets = self._optuna_candidate_buckets(
             allowed_signal_families=allowed,
             history_entries=history_entries,

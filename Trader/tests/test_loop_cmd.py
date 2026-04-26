@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES
+from trader.cli.loop_cmd import DEFAULT_OVERPLAN_FACTOR, DEFAULT_PREVIEW_FACTOR, MIN_PLANNED_SPECS, TIMING_PHASES, _DEFAULT_SIGNAL_FAMILIES
 from trader.cli.loop_cmd import _active_data_snapshot_id, _add_timing, _current_snapshot_entries, _max_preview_count, _new_timings, _planned_spec_count, _should_restart_planner, _suppression_audit_types, _timing_payload
 from trader.cli.loop_cmd import _evaluate_candidate_worker, _evaluate_selected_candidates, _load_or_seed_critic_memory, _loop_experiment_summary, _mark_stage_a_passed, _prescreen_stage_a_candidates, _stage_b_worker_count, _write_loop_outputs, build_parser
 from trader.config import Settings
@@ -62,6 +62,10 @@ def test_loop_signal_family_accepts_composite() -> None:
     args = build_parser().parse_args(["--signal-family", "composite"])
 
     assert args.signal_family == ["composite"]
+
+
+def test_loop_default_signal_families_are_multi_signal_only() -> None:
+    assert _DEFAULT_SIGNAL_FAMILIES == ("multi_signal",)
 
 
 def test_loop_signal_family_accepts_vwap_deviation_as_opt_in() -> None:
