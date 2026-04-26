@@ -95,6 +95,21 @@ def _preview(spec: StrategySpec, bars: tuple[MarketBar, ...], fold: Fold) -> Eva
     )
 
 
+def _preview_with_holdout(spec: StrategySpec, bars: tuple[MarketBar, ...], fold: Fold) -> EvaluationPreview:
+    preview = _preview(spec, bars, fold)
+    return EvaluationPreview(
+        spec=preview.spec,
+        data_slice=preview.data_slice,
+        split_plan_id=preview.split_plan_id,
+        folds=preview.folds,
+        required_history=preview.required_history,
+        cost_model_id=preview.cost_model_id,
+        evaluation_key=preview.evaluation_key,
+        holdout_bars=bars,
+        holdout_snapshot_id="holdout",
+    )
+
+
 def _fold_result(fold: Fold, metrics: dict[str, float], bars: tuple[MarketBar, ...]) -> FoldResult:
     return FoldResult(
         fold_id=fold.fold_id,
@@ -400,8 +415,20 @@ def test_evaluate_preview_adds_cost_stress_after_base_gates_pass(monkeypatch) ->
         "_cost_scenario_metrics",
         lambda *args, **kwargs: {"cost_drag_return_pct": 0.1},
     )
+    monkeypatch.setattr(
+        runner,
+        "_evaluate_holdout",
+        lambda spec, preview: _fold_result(
+            fold,
+            {
+                "return_pct": 1.0,
+                "p_value_vs_random_entry": 0.05,
+            },
+            bars,
+        ),
+    )
 
-    result = runner.evaluate_preview(_preview(spec, bars, fold))
+    result = runner.evaluate_preview(_preview_with_holdout(spec, bars, fold))
 
     assert result.promotion_stage == "candidate"
     assert result.fold_results[0].metrics["cost_drag_return_pct"] == 0.1

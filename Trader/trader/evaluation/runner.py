@@ -212,15 +212,19 @@ class EvaluationRunner:
             self._add_phase_timing("stage_b", started)
         holdout_result = None
         robustness_checks = dict(robustness.checks)
-        if stage in _HOLDOUT_STAGES and preview.holdout_bars:
-            started = perf_counter()
-            holdout_result = self._evaluate_holdout(preview.spec, preview)
-            self._add_phase_timing("stage_b", started)
-            holdout_p_value_pass = holdout_result.metrics.get("p_value_vs_random_entry", 1.0) < 0.10
-            holdout_directional_match = (
-                aggregate_metrics.get("return_pct", 0.0) > 0.0
-                and holdout_result.metrics.get("return_pct", 0.0) > 0.0
-            )
+        if stage in _HOLDOUT_STAGES:
+            if preview.holdout_bars:
+                started = perf_counter()
+                holdout_result = self._evaluate_holdout(preview.spec, preview)
+                self._add_phase_timing("stage_b", started)
+                holdout_p_value_pass = holdout_result.metrics.get("p_value_vs_random_entry", 1.0) < 0.10
+                holdout_directional_match = (
+                    aggregate_metrics.get("return_pct", 0.0) > 0.0
+                    and holdout_result.metrics.get("return_pct", 0.0) > 0.0
+                )
+            else:
+                holdout_p_value_pass = False
+                holdout_directional_match = False
             robustness_checks["holdout_p_value_pass"] = holdout_p_value_pass
             robustness_checks["holdout_directional_match"] = holdout_directional_match
             if not (holdout_p_value_pass and holdout_directional_match):
