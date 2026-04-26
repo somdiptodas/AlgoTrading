@@ -184,6 +184,46 @@ def test_trade_visualization_uses_legacy_fallback_without_vote_data(tmp_path: Pa
     assert "Strategy signal turned off" in html
 
 
+def test_trade_visualization_vote_details_html_includes_entry_and_exit_vote_tables(tmp_path: Path) -> None:
+    experiment_dir = _write_experiment_artifacts(
+        tmp_path,
+        {
+            "entry_timestamp_utc": "2026-01-05T14:30:00+00:00",
+            "exit_timestamp_utc": "2026-01-05T14:35:00+00:00",
+            "entry_price": 100.0,
+            "exit_price": 101.0,
+            "shares": 10,
+            "bars_held": 5,
+            "pnl_cash": 10.0,
+            "pnl_pct": 1.0,
+            "entry_reason": "signal_on",
+            "exit_reason": "signal_flip",
+            "entry_rule": {"passed": True, "reason": "entry k_of_n passed: 3/5 signals"},
+            "exit_rule": {"passed": True, "reason": "exit any passed: 1/3 signals"},
+            "entry_votes": [
+                {"name": "rsi_below", "passed": True, "detail": "RSI 28.4 < 30.0"},
+                {"name": "ema_trend_up", "passed": True, "detail": "close > EMA slow"},
+            ],
+            "exit_votes": [
+                {"name": "rsi_above", "passed": False, "detail": "RSI 45.0 < 70.0"},
+            ],
+            "cost_cash": 0.0,
+        },
+    )
+
+    output = write_trade_visualization(experiment_dir, tmp_path / "trade_review.html")
+    html = output.read_text(encoding="utf-8")
+
+    assert html.count('<details class="vote-details">') == 1
+    assert html.count('<table class="vote-table">') == 2
+    assert "<tr><th>Signal</th><th>Passed</th><th>Detail</th></tr>" in html
+    assert "Entry votes" in html
+    assert "Exit votes" in html
+    assert "ema_trend_up" in html
+    assert "close &gt; EMA slow" in html
+    assert "rsi_above" in html
+
+
 def _write_experiment_artifacts(tmp_path: Path, trade: dict[str, object]) -> Path:
     experiment_dir = tmp_path / "artifacts" / "exp_1"
     experiment_dir.mkdir(parents=True)

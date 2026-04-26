@@ -317,7 +317,7 @@ the checklist in each commit.
 - [x] Add expandable vote details per trade.
 - [x] Show passed and failed child signals distinctly.
 - [x] Keep legacy reports rendering when vote data is missing.
-- [ ] Add HTML rendering tests for run reports, dashboard links, and vote
+- [x] Add HTML rendering tests for run reports, dashboard links, and vote
       details.
 
 ### Phase 7: Planner And Search Space
