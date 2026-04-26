@@ -346,7 +346,7 @@ the checklist in each commit.
 - [x] Run 10 loop iterations with `multi_signal` only.
 - [ ] Report:
   - [x] best Sharpe-like score.
-  - [ ] best return.
+  - [x] best return.
   - [ ] trade count.
   - [ ] duplicate/reused candidate rate.
   - [ ] top-performing rule shapes.
