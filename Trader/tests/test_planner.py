@@ -363,6 +363,21 @@ def test_planner_caps_composite_bucket_and_represents_canonical_shapes() -> None
     assert all(REGISTRY.validate_spec(spec) for spec in composite_specs)
 
 
+def test_planner_keeps_composite_grid_available_as_compatibility_opt_in() -> None:
+    planner = DeterministicPlanner(REGISTRY)
+
+    planned = planner.plan(
+        batch_size=12,
+        allowed_signal_families=("composite",),
+    )
+
+    assert planned
+    assert {item.generator_kind for item in planned} == {"composite_grid"}
+    assert not any(item.spec.signal.name == "multi_signal" for item in planned)
+    assert all("composite" in item.spec.tags for item in planned)
+    assert all(REGISTRY.validate_spec(item.spec) for item in planned)
+
+
 def test_planner_waits_for_seed_history_before_optuna_bucket(tmp_path: Path) -> None:
     planner = DeterministicPlanner(REGISTRY)
     grid = REGISTRY.parameter_grid("rsi_reversion")
