@@ -151,6 +151,8 @@ def main(argv: list[str] | None = None) -> None:
         batch_size=_planned_spec_count(args.batch_size, args.overplan_factor),
         frontier_specs=frontier_specs,
         allowed_signal_families=signal_families,
+        history_entries=history_entries,
+        optuna_dir=settings.research_dir / "optuna",
     )
     generated = generator.validate_and_filter(
         planned,

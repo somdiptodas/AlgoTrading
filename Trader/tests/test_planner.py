@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import json
+import sys
+from types import SimpleNamespace
+from pathlib import Path
+
+from trader.ledger.entry import LedgerEntry
 from trader.research.planner import DeterministicPlanner
 from trader.strategies.registry import REGISTRY
 from trader.strategies.spec import SignalSpec, StrategySpec
@@ -272,6 +278,168 @@ def test_planner_caps_composite_bucket_and_represents_canonical_shapes() -> None
         for spec in composite_specs
     )
     assert all(REGISTRY.validate_spec(spec) for spec in composite_specs)
+
+
+def test_planner_waits_for_seed_history_before_optuna_bucket(tmp_path: Path) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    grid = REGISTRY.parameter_grid("rsi_reversion")
+    history = tuple(
+        _entry(f"rsi_{index}", "rsi_reversion", grid[index], return_pct=float(index))
+        for index in range(9)
+    )
+
+    planned = planner.plan(
+        batch_size=16,
+        allowed_signal_families=("rsi_reversion",),
+        history_entries=history,
+        optuna_dir=tmp_path,
+    )
+
+    assert not any(item.generator_kind == "optuna_tpe" for item in planned)
+    assert not (tmp_path / "rsi_reversion.json").exists()
+
+
+def test_planner_adds_optuna_bucket_after_seed_history_and_persists_state(tmp_path: Path) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    grid = REGISTRY.parameter_grid("rsi_reversion")
+    history = tuple(
+        _entry(f"rsi_{index}", "rsi_reversion", grid[index], return_pct=float(index))
+        for index in range(10)
+    )
+
+    planned = planner.plan(
+        batch_size=20,
+        allowed_signal_families=("rsi_reversion",),
+        history_entries=history,
+        optuna_dir=tmp_path,
+    )
+    optuna_plans = [item for item in planned if item.generator_kind == "optuna_tpe"]
+    payload = json.loads((tmp_path / "rsi_reversion.json").read_text(encoding="utf-8"))
+
+    assert optuna_plans
+    assert all(REGISTRY.validate_spec(item.spec) for item in optuna_plans)
+    assert {item.spec.signal.name for item in optuna_plans} == {"rsi_reversion"}
+    assert all(item.parent_experiment_ids == ("rsi_9",) for item in optuna_plans)
+    assert all(item.spec.tags == ("optuna_tpe",) for item in optuna_plans)
+    assert payload["signal_family"] == "rsi_reversion"
+    assert payload["objective"] == "return_pct"
+    assert len(payload["completed_trials"]) == 10
+    assert payload["pending_suggestions"]
+
+
+def test_planner_loads_existing_optuna_study_without_fake_objectives(tmp_path: Path, monkeypatch) -> None:
+    planner = DeterministicPlanner(REGISTRY)
+    grid = REGISTRY.parameter_grid("rsi_reversion")
+    history = tuple(
+        _entry(f"rsi_{index}", "rsi_reversion", grid[index], return_pct=float(index))
+        for index in range(10)
+    )
+    create_study_calls = []
+    tell_calls = []
+    added_trials = []
+
+    class FakeDistribution:
+        def __init__(self, choices):
+            self.choices = tuple(choices)
+
+    class FakeTrial:
+        def __init__(self, params, user_attrs=None):
+            self.params = params
+            self.user_attrs = user_attrs or {}
+
+    class FakeStudy:
+        def __init__(self):
+            self.trials = [
+                FakeTrial(
+                    dict(history[0].spec.signal.params),
+                    user_attrs={"ledger_experiment_id": history[0].experiment_id},
+                )
+            ]
+            self.ask_count = 0
+
+        def get_trials(self, deepcopy=False):
+            return list(self.trials)
+
+        def add_trial(self, trial):
+            self.trials.append(trial)
+            added_trials.append(trial)
+
+        def ask(self, fixed_distributions):
+            self.ask_count += 1
+            if self.ask_count == 1:
+                params = dict(history[0].spec.signal.params)
+            else:
+                params = {
+                    key: distribution.choices[-1]
+                    for key, distribution in fixed_distributions.items()
+                }
+            trial = FakeTrial(params)
+            self.trials.append(trial)
+            return trial
+
+        def tell(self, trial, value=None, state=None):
+            tell_calls.append((trial, value, state))
+
+    def create_trial(*, params, distributions, value, user_attrs):
+        return FakeTrial(params, user_attrs=user_attrs)
+
+    fake_optuna = SimpleNamespace(
+        create_study=lambda **kwargs: create_study_calls.append(kwargs) or FakeStudy(),
+        distributions=SimpleNamespace(CategoricalDistribution=FakeDistribution),
+        samplers=SimpleNamespace(TPESampler=lambda **kwargs: object()),
+        trial=SimpleNamespace(create_trial=create_trial, TrialState=SimpleNamespace(FAIL="FAIL")),
+    )
+    monkeypatch.setitem(sys.modules, "optuna", fake_optuna)
+
+    planned = planner.plan(
+        batch_size=20,
+        allowed_signal_families=("rsi_reversion",),
+        history_entries=history,
+        optuna_dir=tmp_path,
+    )
+
+    assert any(item.generator_kind == "optuna_tpe" for item in planned)
+    assert create_study_calls[0]["load_if_exists"] is True
+    assert create_study_calls[0]["storage"].endswith("/rsi_reversion.db")
+    assert {trial.user_attrs["ledger_experiment_id"] for trial in added_trials} == {
+        entry.experiment_id for entry in history[1:]
+    }
+    assert all(value is None for _, value, _ in tell_calls)
+    assert any(state == "FAIL" for _, _, state in tell_calls)
+
+
+def _entry(
+    experiment_id: str,
+    signal_name: str,
+    params: dict[str, object],
+    *,
+    return_pct: float,
+) -> LedgerEntry:
+    spec = REGISTRY.validate_spec(
+        StrategySpec(
+            name=experiment_id,
+            signal=SignalSpec(signal_name, params),
+        )
+    )
+    return LedgerEntry(
+        experiment_id=experiment_id,
+        evaluation_key=f"{experiment_id}_key",
+        status="completed",
+        spec=spec,
+        spec_hash=spec.spec_hash(),
+        data_snapshot_id="snapshot",
+        split_plan_id="split",
+        cost_model_id="cost",
+        aggregate_metrics={
+            "return_pct": return_pct,
+            "sharpe_like": 0.0,
+            "max_drawdown_pct": 0.0,
+        },
+        fold_results=(),
+        robustness_checks={},
+        promotion_stage="exploratory",
+        completed_at_utc="2026-01-01T00:00:00+00:00",
+    )
 
 
 def _child_names(spec: StrategySpec) -> tuple[str, ...]:
