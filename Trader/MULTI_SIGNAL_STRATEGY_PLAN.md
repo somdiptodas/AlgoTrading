@@ -280,10 +280,10 @@ the checklist in each commit.
 - [x] Add a decision-based execution path to the engine.
 - [x] While flat, schedule entry from `entry_rule.passed`.
 - [x] While long, schedule exit from `exit_rule.passed`.
-- [ ] Preserve hard exits:
+- [x] Preserve hard exits:
   - [x] stop loss
   - [x] session close
-  - [ ] final bar
+  - [x] final bar
 - [ ] Preserve one-position-at-a-time behavior.
 - [ ] Store entry decision details on the open position.
 - [ ] Copy entry and exit decision details into each completed trade.
